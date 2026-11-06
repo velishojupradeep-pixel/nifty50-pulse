@@ -484,6 +484,39 @@ with rec_col2:
         unsafe_allow_html=True,
     )
 
+# Live NSE Option Chain Table Expander
+with st.expander("📊 View Live NSE Option Chain Table (Direct from nseindia.com/option-chain)", expanded=False):
+    st.caption(f"Official live strike chain from NSE India for current expiry **{curr_rec['expiry_date']}** (Underlying: ₹{advisor.get('atm_strike', 24600):,})")
+    if curr_chain and "strikes_map" in curr_chain:
+        atm = advisor["atm_strike"]
+        strikes_to_show = [s for s in sorted(curr_chain["strikes_map"].keys()) if abs(s - atm) <= 600]
+        oc_records = []
+        for s in strikes_to_show:
+            d = curr_chain["strikes_map"].get(s, {})
+            is_atm = "🎯 " if s == atm else ""
+            oc_records.append({
+                "CE OI": d.get("ce_oi", 0),
+                "CE Change": d.get("ce_change", 0.0),
+                "CE LTP": d.get("ce_ltp", 0.0),
+                "Strike": f"{is_atm}{s}",
+                "PE LTP": d.get("pe_ltp", 0.0),
+                "PE Change": d.get("pe_change", 0.0),
+                "PE OI": d.get("pe_oi", 0),
+            })
+        oc_df = pd.DataFrame(oc_records)
+        st.dataframe(
+            oc_df.style.format({
+                "CE OI": "{:,}",
+                "CE Change": "{:+.2f}",
+                "CE LTP": "₹{:.2f}",
+                "PE LTP": "₹{:.2f}",
+                "PE Change": "{:+.2f}",
+                "PE OI": "{:,}",
+            }),
+            hide_index=True,
+            use_container_width=True,
+        )
+
 st.markdown("---")
 
 # Heavyweights Breakdown Row

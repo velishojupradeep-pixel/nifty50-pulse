@@ -255,27 +255,33 @@ class StrikeAdvisor:
             hedge_ce = sell_ce + 200
             hedge_pe = sell_pe - 200
 
-        # Query LIVE PREMIUMS directly from NSE strikes map if present
+        # Ensure strikes exist in the live NSE strikes map
+        if strikes_map:
+            available_strikes = sorted(strikes_map.keys())
+            if sell_ce not in strikes_map:
+                sell_ce = min(available_strikes, key=lambda s: abs(s - sell_ce))
+            if sell_pe not in strikes_map:
+                sell_pe = min(available_strikes, key=lambda s: abs(s - sell_pe))
+            if hedge_ce not in strikes_map:
+                hedge_ce = min(available_strikes, key=lambda s: abs(s - hedge_ce))
+            if hedge_pe not in strikes_map:
+                hedge_pe = min(available_strikes, key=lambda s: abs(s - hedge_pe))
+
+        # Query LIVE PREMIUMS directly from NSE strikes map
         ce_data = strikes_map.get(sell_ce, {})
         pe_data = strikes_map.get(sell_pe, {})
         hedge_ce_data = strikes_map.get(hedge_ce, {})
         hedge_pe_data = strikes_map.get(hedge_pe, {})
 
-        ce_ltp = ce_data.get("ce_ltp", 0.0)
-        pe_ltp = pe_data.get("pe_ltp", 0.0)
-        ce_oi = ce_data.get("ce_oi", 0)
-        pe_oi = pe_data.get("pe_oi", 0)
-        ce_iv = ce_data.get("ce_iv", 0.0)
-        pe_iv = pe_data.get("pe_iv", 0.0)
+        ce_ltp = float(ce_data.get("ce_ltp", 0.0))
+        pe_ltp = float(pe_data.get("pe_ltp", 0.0))
+        ce_oi = int(ce_data.get("ce_oi", 0))
+        pe_oi = int(pe_data.get("pe_oi", 0))
+        ce_iv = float(ce_data.get("ce_iv", 0.0))
+        pe_iv = float(pe_data.get("pe_iv", 0.0))
 
-        hedge_ce_ltp = hedge_ce_data.get("ce_ltp", 0.0)
-        hedge_pe_ltp = hedge_pe_data.get("pe_ltp", 0.0)
-
-        # Fallback approximation if market is closed or strike not in map
-        if ce_ltp <= 0.0:
-            ce_ltp = round(max(5.0, spot * (0.0035 if expiry_type == "CURRENT" else 0.006)), 1)
-        if pe_ltp <= 0.0:
-            pe_ltp = round(max(5.0, spot * (0.0035 if expiry_type == "CURRENT" else 0.006)), 1)
+        hedge_ce_ltp = float(hedge_ce_data.get("ce_ltp", 0.0))
+        hedge_pe_ltp = float(hedge_pe_data.get("pe_ltp", 0.0))
 
         total_premium = round(ce_ltp + pe_ltp, 2)
         lower_breakeven = round(sell_pe - total_premium, 1)
