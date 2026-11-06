@@ -1,0 +1,18 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Cache & Local Files
+.vol_cache.json
+.DS_Store
+*.log
+
+# Streamlit local state
+.streamlit/secrets.toml
