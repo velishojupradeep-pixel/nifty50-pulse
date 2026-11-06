@@ -32,6 +32,9 @@ class AnalyticsEngine:
         nifty_meta: Dict[str, Any],
         avg_volumes: Dict[str, float] = None,
         custom_iv: float = None,
+        curr_chain: Dict[str, Any] = None,
+        next_chain: Dict[str, Any] = None,
+        official_expiries: list = None,
     ) -> Dict[str, Any]:
         """
         Takes raw constituent data and computes complete analytics:
@@ -94,6 +97,9 @@ class AnalyticsEngine:
             regime=regime_analysis,
             top5_df=top5_df,
             custom_iv=custom_iv,
+            curr_chain=curr_chain,
+            next_chain=next_chain,
+            official_expiries=official_expiries,
         )
 
         # 6. Gainers & Losers

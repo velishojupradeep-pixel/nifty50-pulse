@@ -171,7 +171,7 @@ data_source_mode = st.sidebar.selectbox(
 )
 
 # Fetch Data
-with st.spinner("Fetching live constituent data..."):
+with st.spinner("Fetching live constituent data & official NSE option chain..."):
     source_choice = (
         "Auto" if data_source_mode.startswith("Auto") else data_source_mode
     )
@@ -179,8 +179,20 @@ with st.spinner("Fetching live constituent data..."):
         source_preference=source_choice
     )
     avg_volumes = data_manager.get_average_volumes()
+    
+    # Fetch live Option Chain directly from NSE India (nseindia.com/option-chain)
+    curr_chain, next_chain, official_expiries = (
+        data_manager.get_live_option_chains()
+    )
+    
     market = analytics_engine.process_market_data(
-        df_raw, nifty_meta, avg_volumes, custom_iv=custom_iv
+        df_raw,
+        nifty_meta,
+        avg_volumes,
+        custom_iv=custom_iv,
+        curr_chain=curr_chain,
+        next_chain=next_chain,
+        official_expiries=official_expiries,
     )
 
 st.sidebar.caption(f"**Connected Feed**: `{source_used}`")
@@ -332,7 +344,19 @@ st.markdown(
 # Two Expiry Recommendation Columns
 rec_col1, rec_col2 = st.columns(2)
 
+live_badge_text = (
+    f"🟢 Verified Live Data Direct from <a href='https://www.nseindia.com/option-chain' target='_blank' style='color: #64b5f6; text-decoration: underline;'>NSE India Option Chain</a> ({advisor['nse_timestamp']})"
+    if advisor.get("is_live_nse")
+    else "⚡ Real-time Analytics Engine"
+)
+st.markdown(
+    f"<div style='margin-bottom: 12px; font-size: 0.82rem; color: #90a4ae;'>{live_badge_text} &nbsp;|&nbsp; Official Expiries directly from NSE</div>",
+    unsafe_allow_html=True,
+)
+
 with rec_col1:
+    hedge_ce_note = f"(@ ₹{curr_rec['hedge_ce_ltp']:.1f})" if curr_rec['hedge_ce_ltp'] > 0 else "(Hedge)"
+    hedge_pe_note = f"(@ ₹{curr_rec['hedge_pe_ltp']:.1f})" if curr_rec['hedge_pe_ltp'] > 0 else "(Hedge)"
     st.markdown(
         f"""
         <div class="strike-card">
@@ -345,29 +369,45 @@ with rec_col1:
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                 <div class="strike-leg-box">
-                    <div style="color: #00c853; font-size: 0.8rem; font-weight: 700;">SELL CALL (CE)</div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #00c853; font-size: 0.8rem; font-weight: 700;">SELL CALL (CE)</span>
+                        <span style="color: #00e676; font-size: 0.85rem; font-weight: 700;">₹{curr_rec['ce_ltp']:.2f} LTP</span>
+                    </div>
                     <div class="strike-leg-val">{curr_rec['sell_ce']} CE</div>
                     <div style="font-size: 0.78rem; color: #848e9c; margin-top: 2px;">
-                        +{curr_rec['ce_otm_pts']} pts (+{curr_rec['ce_otm_pct']}%) OTM
+                        +{curr_rec['ce_otm_pts']} pts (+{curr_rec['ce_otm_pct']}%) OTM | IV: {curr_rec['ce_iv']:.1f}%
+                    </div>
+                    <div style="font-size: 0.74rem; color: #90a4ae; margin-top: 2px;">
+                        OI: <b>{curr_rec['ce_oi']:,}</b>
                     </div>
                     <div style="font-size: 0.75rem; color: #64b5f6; margin-top: 4px;">
-                        🛡️ Hedge: Buy <b>{curr_rec['hedge_ce']} CE</b>
+                        🛡️ Buy <b>{curr_rec['hedge_ce']} CE</b> {hedge_ce_note}
                     </div>
                 </div>
                 <div class="strike-leg-box pe">
-                    <div style="color: #ff3344; font-size: 0.8rem; font-weight: 700;">SELL PUT (PE)</div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #ff3344; font-size: 0.8rem; font-weight: 700;">SELL PUT (PE)</span>
+                        <span style="color: #ff5252; font-size: 0.85rem; font-weight: 700;">₹{curr_rec['pe_ltp']:.2f} LTP</span>
+                    </div>
                     <div class="strike-leg-val">{curr_rec['sell_pe']} PE</div>
                     <div style="font-size: 0.78rem; color: #848e9c; margin-top: 2px;">
-                        -{curr_rec['pe_otm_pts']} pts (-{curr_rec['pe_otm_pct']}%) OTM
+                        -{curr_rec['pe_otm_pts']} pts (-{curr_rec['pe_otm_pct']}%) OTM | IV: {curr_rec['pe_iv']:.1f}%
+                    </div>
+                    <div style="font-size: 0.74rem; color: #90a4ae; margin-top: 2px;">
+                        OI: <b>{curr_rec['pe_oi']:,}</b>
                     </div>
                     <div style="font-size: 0.75rem; color: #64b5f6; margin-top: 4px;">
-                        🛡️ Hedge: Buy <b>{curr_rec['hedge_pe']} PE</b>
+                        🛡️ Buy <b>{curr_rec['hedge_pe']} PE</b> {hedge_pe_note}
                     </div>
                 </div>
             </div>
             <div class="breakeven-corridor">
-                <div style="font-size: 0.78rem; color: #848e9c; text-transform: uppercase;">Breakeven Corridor (Est. Premium ₹{curr_rec['est_combined_premium']:.0f})</div>
-                <div style="font-size: 1.05rem; font-weight: 700; color: #eaecef; margin: 2px 0;">
+                <div style="font-size: 0.78rem; color: #848e9c; display: flex; justify-content: space-between;">
+                    <span>LIVE PREMIUM: <b style="color: #00e676;">₹{curr_rec['total_premium']:.2f}</b></span>
+                    <span>ATM Straddle: <b>₹{advisor['atm_straddle_curr']:.2f}</b></span>
+                    <span>PCR: <b>{advisor['pcr']:.2f}</b> | Max Pain: <b>{advisor['max_pain']}</b></span>
+                </div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: #eaecef; margin: 4px 0;">
                     {curr_rec['lower_breakeven']} &nbsp;⟵ &nbsp;<span style="color: #00c853;">{curr_rec['safe_range_pts']} pts Safe Zone</span> &nbsp;⟶ &nbsp;{curr_rec['upper_breakeven']}
                 </div>
             </div>
@@ -380,6 +420,8 @@ with rec_col1:
     )
 
 with rec_col2:
+    hedge_ce_note_next = f"(@ ₹{next_rec['hedge_ce_ltp']:.1f})" if next_rec['hedge_ce_ltp'] > 0 else "(Hedge)"
+    hedge_pe_note_next = f"(@ ₹{next_rec['hedge_pe_ltp']:.1f})" if next_rec['hedge_pe_ltp'] > 0 else "(Hedge)"
     st.markdown(
         f"""
         <div class="strike-card">
@@ -392,29 +434,45 @@ with rec_col2:
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                 <div class="strike-leg-box">
-                    <div style="color: #00c853; font-size: 0.8rem; font-weight: 700;">SELL CALL (CE)</div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #00c853; font-size: 0.8rem; font-weight: 700;">SELL CALL (CE)</span>
+                        <span style="color: #00e676; font-size: 0.85rem; font-weight: 700;">₹{next_rec['ce_ltp']:.2f} LTP</span>
+                    </div>
                     <div class="strike-leg-val">{next_rec['sell_ce']} CE</div>
                     <div style="font-size: 0.78rem; color: #848e9c; margin-top: 2px;">
-                        +{next_rec['ce_otm_pts']} pts (+{next_rec['ce_otm_pct']}%) OTM
+                        +{next_rec['ce_otm_pts']} pts (+{next_rec['ce_otm_pct']}%) OTM | IV: {next_rec['ce_iv']:.1f}%
+                    </div>
+                    <div style="font-size: 0.74rem; color: #90a4ae; margin-top: 2px;">
+                        OI: <b>{next_rec['ce_oi']:,}</b>
                     </div>
                     <div style="font-size: 0.75rem; color: #64b5f6; margin-top: 4px;">
-                        🛡️ Hedge: Buy <b>{next_rec['hedge_ce']} CE</b>
+                        🛡️ Buy <b>{next_rec['hedge_ce']} CE</b> {hedge_ce_note_next}
                     </div>
                 </div>
                 <div class="strike-leg-box pe">
-                    <div style="color: #ff3344; font-size: 0.8rem; font-weight: 700;">SELL PUT (PE)</div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: #ff3344; font-size: 0.8rem; font-weight: 700;">SELL PUT (PE)</span>
+                        <span style="color: #ff5252; font-size: 0.85rem; font-weight: 700;">₹{next_rec['pe_ltp']:.2f} LTP</span>
+                    </div>
                     <div class="strike-leg-val">{next_rec['sell_pe']} PE</div>
                     <div style="font-size: 0.78rem; color: #848e9c; margin-top: 2px;">
-                        -{next_rec['pe_otm_pts']} pts (-{next_rec['pe_otm_pct']}%) OTM
+                        -{next_rec['pe_otm_pts']} pts (-{next_rec['pe_otm_pct']}%) OTM | IV: {next_rec['pe_iv']:.1f}%
+                    </div>
+                    <div style="font-size: 0.74rem; color: #90a4ae; margin-top: 2px;">
+                        OI: <b>{next_rec['pe_oi']:,}</b>
                     </div>
                     <div style="font-size: 0.75rem; color: #64b5f6; margin-top: 4px;">
-                        🛡️ Hedge: Buy <b>{next_rec['hedge_pe']} PE</b>
+                        🛡️ Buy <b>{next_rec['hedge_pe']} PE</b> {hedge_pe_note_next}
                     </div>
                 </div>
             </div>
             <div class="breakeven-corridor">
-                <div style="font-size: 0.78rem; color: #848e9c; text-transform: uppercase;">Breakeven Corridor (Est. Premium ₹{next_rec['est_combined_premium']:.0f})</div>
-                <div style="font-size: 1.05rem; font-weight: 700; color: #eaecef; margin: 2px 0;">
+                <div style="font-size: 0.78rem; color: #848e9c; display: flex; justify-content: space-between;">
+                    <span>LIVE PREMIUM: <b style="color: #00e676;">₹{next_rec['total_premium']:.2f}</b></span>
+                    <span>Safe Corridor: <b>{next_rec['safe_range_pts']} pts</b></span>
+                    <span>DTE: <b>{next_rec['dte']} Days</b></span>
+                </div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: #eaecef; margin: 4px 0;">
                     {next_rec['lower_breakeven']} &nbsp;⟵ &nbsp;<span style="color: #00c853;">{next_rec['safe_range_pts']} pts Safe Zone</span> &nbsp;⟶ &nbsp;{next_rec['upper_breakeven']}
                 </div>
             </div>

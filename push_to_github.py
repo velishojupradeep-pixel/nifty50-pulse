@@ -33,8 +33,8 @@ def push_repo(remote_url: str, token: str = ""):
 
     print(f"Pushing 'main' branch to remote: {remote_url} ...")
     try:
-        # Push refs/heads/main to refs/heads/main
-        push(repo, target_url, refspecs=["refs/heads/main:refs/heads/main"])
+        # Push refs/heads/main to refs/heads/main with force=True
+        push(repo, target_url, refspecs=["refs/heads/main:refs/heads/main"], force=True)
         print("✅ Successfully pushed to GitHub!")
         print("\nNext step for Streamlit.io deployment:")
         print("1. Go to https://share.streamlit.io")

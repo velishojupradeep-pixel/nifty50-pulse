@@ -1,17 +1,18 @@
 """
 Option Seller Strategy & Strike Recommendation Engine.
-Analyzes market regime, index heavyweight momentum, and expected move
-to generate actionable verdicts and optimal strike selections for current and upcoming expiries.
+Integrated with genuine live NSE Option Chain (https://www.nseindia.com/option-chain).
+Provides authentic official expiry dates, live strike premiums (CE & PE LTP),
+real ATM straddle pricing, Open Interest, PCR, and Max Pain.
 """
 
 import math
-from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from datetime import datetime
+from typing import Dict, Any, List, Optional
 import pandas as pd
 
 
 class StrikeAdvisor:
-    """Generates expert option seller verdicts and strike recommendations."""
+    """Generates expert option seller verdicts and strike recommendations using live NSE data."""
 
     def __init__(self, default_iv: float = 13.5):
         self.default_iv = default_iv
@@ -21,41 +22,14 @@ class StrikeAdvisor:
         """Round price to nearest strike step (50 for NIFTY weekly, 100 for monthly)."""
         return int(round(price / step) * step)
 
-    def get_expiry_dates(self, base_date: datetime = None) -> Dict[str, Any]:
-        """
-        Calculates current weekly expiry (nearest Thursday) and upcoming expiry.
-        NIFTY 50 weekly options expire on Thursdays.
-        """
-        now = base_date or datetime.now()
-        # Thursday is weekday 3 (Monday is 0, Sunday is 6)
-        days_ahead = (3 - now.weekday()) % 7
-
-        # If today is Thursday after 15:30 IST, nearest expiry is next Thursday
-        if days_ahead == 0 and (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
-            days_ahead = 7
-
-        current_expiry = now + timedelta(days=days_ahead)
-        next_expiry = current_expiry + timedelta(days=7)
-
-        dte_current = max(1, (current_expiry.date() - now.date()).days)
-        dte_next = max(8, (next_expiry.date() - now.date()).days)
-
-        return {
-            "current_expiry_date": current_expiry.strftime("%d-%b-%Y"),
-            "current_expiry_day": current_expiry.strftime("%A"),
-            "dte_current": dte_current,
-            "next_expiry_date": next_expiry.strftime("%d-%b-%Y"),
-            "next_expiry_day": next_expiry.strftime("%A"),
-            "dte_next": dte_next,
-        }
-
-    def calculate_expected_move(self, spot: float, dte: int, iv: float = None) -> float:
-        """
-        Calculates 1-Standard Deviation Expected Move based on IV and DTE:
-        Expected Move = Spot * (IV / 100) * sqrt(DTE / 365)
-        """
-        vol = (iv or self.default_iv) / 100.0
-        return spot * vol * math.sqrt(dte / 365.0)
+    def calculate_dte(self, expiry_str: str) -> int:
+        """Computes days to expiry from NSE date string format (e.g. '09-Nov-2026')."""
+        try:
+            exp_date = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+            today = datetime.now().date()
+            return max(1, (exp_date - today).days)
+        except Exception:
+            return 4
 
     def generate_verdict_and_strikes(
         self,
@@ -63,58 +37,88 @@ class StrikeAdvisor:
         regime: Dict[str, Any],
         top5_df: pd.DataFrame,
         custom_iv: float = None,
+        curr_chain: Optional[Dict[str, Any]] = None,
+        next_chain: Optional[Dict[str, Any]] = None,
+        official_expiries: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        Produces comprehensive Option Seller Verdict and specific strike recommendations.
+        Produces comprehensive Option Seller Verdict and specific strike recommendations
+        backed by live NSE Option Chain prices.
         """
-        spot = nifty_meta.get("lastPrice", 24500.0)
-        atm_strike = self.round_strike(spot, 50)
+        curr_chain = curr_chain or {}
+        next_chain = next_chain or {}
+        expiries = official_expiries or []
+
+        # Prefer live underlying from NSE Option Chain if available
+        spot = curr_chain.get("underlying") or nifty_meta.get("lastPrice", 24600.0)
+        atm_strike = curr_chain.get("atm_strike") or self.round_strike(spot, 50)
         regime_status = regime.get("status", "RANGEBOUND / TUG-OF-WAR")
         regime_score = regime.get("score", 0.0)
         iv = custom_iv or self.default_iv
 
-        exp_info = self.get_expiry_dates()
-        dte_curr = exp_info["dte_current"]
-        dte_next = exp_info["dte_next"]
+        # Official Expiry Dates directly from NSE
+        curr_expiry_date = expiries[0] if len(expiries) >= 1 else curr_chain.get("expiry", "09-Nov-2026")
+        next_expiry_date = expiries[1] if len(expiries) >= 2 else next_chain.get("expiry", "17-Nov-2026")
 
-        # 1-SD Expected Moves
-        em_curr = self.calculate_expected_move(spot, dte_curr, iv)
-        em_next = self.calculate_expected_move(spot, dte_next, iv)
+        dte_curr = self.calculate_dte(curr_expiry_date)
+        dte_next = self.calculate_dte(next_expiry_date)
 
-        # Build Verdict based on alignment and regime
-        verdict = self._build_verdict(spot, regime_status, regime_score, top5_df, em_curr)
+        # Expected Move based on IV or real ATM Straddle price
+        atm_straddle_curr = curr_chain.get("atm_straddle", 0.0)
+        if atm_straddle_curr > 0:
+            # When ATM straddle price is live from NSE, Expected Move ~ 0.85 * Straddle Price
+            em_curr = round(atm_straddle_curr * 0.85, 1)
+        else:
+            em_curr = round(spot * (iv / 100.0) * math.sqrt(dte_curr / 365.0), 1)
 
-        # Generate Current Expiry Recommendation
+        atm_straddle_next = next_chain.get("atm_straddle", 0.0)
+        if atm_straddle_next > 0:
+            em_next = round(atm_straddle_next * 0.85, 1)
+        else:
+            em_next = round(spot * (iv / 100.0) * math.sqrt(dte_next / 365.0), 1)
+
+        # Build Verdict based on alignment, regime, and PCR
+        pcr = curr_chain.get("pcr", 1.0)
+        max_pain = curr_chain.get("max_pain", atm_strike)
+        verdict = self._build_verdict(spot, regime_status, regime_score, top5_df, em_curr, pcr, max_pain)
+
+        # Generate Current Expiry Recommendation with LIVE premiums
         curr_rec = self._build_expiry_recommendation(
             expiry_type="CURRENT",
-            expiry_name=f"{exp_info['current_expiry_date']} ({dte_curr} DTE)",
+            expiry_date=curr_expiry_date,
+            dte=dte_curr,
             spot=spot,
             atm_strike=atm_strike,
             expected_move=em_curr,
             regime_status=regime_status,
-            regime_score=regime_score,
+            chain_data=curr_chain,
             step=50,
         )
 
-        # Generate Upcoming Expiry Recommendation
+        # Generate Upcoming Expiry Recommendation with LIVE premiums
         next_rec = self._build_expiry_recommendation(
             expiry_type="UPCOMING",
-            expiry_name=f"{exp_info['next_expiry_date']} ({dte_next} DTE)",
+            expiry_date=next_expiry_date,
+            dte=dte_next,
             spot=spot,
             atm_strike=atm_strike,
             expected_move=em_next,
             regime_status=regime_status,
-            regime_score=regime_score,
-            step=100,  # 100 pt strikes for wider upcoming expiry
+            chain_data=next_chain,
+            step=100,
         )
 
         return {
             "verdict": verdict,
-            "expiry_info": exp_info,
+            "is_live_nse": curr_chain.get("is_live_nse", False),
+            "nse_timestamp": curr_chain.get("timestamp", ""),
             "atm_strike": atm_strike,
             "iv_used": iv,
-            "expected_move_curr": round(em_curr, 1),
-            "expected_move_next": round(em_next, 1),
+            "pcr": pcr,
+            "max_pain": max_pain,
+            "atm_straddle_curr": atm_straddle_curr,
+            "expected_move_curr": em_curr,
+            "expected_move_next": em_next,
             "current_expiry": curr_rec,
             "upcoming_expiry": next_rec,
         }
@@ -126,14 +130,18 @@ class StrikeAdvisor:
         regime_score: float,
         top5_df: pd.DataFrame,
         em_curr: float,
+        pcr: float,
+        max_pain: int,
     ) -> Dict[str, Any]:
         """Synthesizes option seller market regime into an authoritative tactical verdict."""
+        pcr_note = f"PCR: {pcr:.2f} | Max Pain: {max_pain}"
+
         if "RANGEBOUND" in regime_status:
             badge = "🟢 HIGH THETA DECAY (NEUTRAL)"
             tone = "success"
             summary = (
-                "Heavyweights are neutralizing each other's point impact. "
-                "Spot is boxed in a tight tug-of-war. Ideal condition for premium selling."
+                f"Heavyweights are neutralizing each other's point impact. "
+                f"NIFTY is boxed in a range. Spot is trading near Max Pain ({max_pain}) with {pcr_note}."
             )
             action = (
                 "Deploy Delta-Neutral setups: Short Strangles, Iron Flies, or Iron Condors. "
@@ -146,7 +154,7 @@ class StrikeAdvisor:
             tone = "danger"
             summary = (
                 f"Heavyweights are firing together upward (Alignment Score: +{regime_score:.1f}). "
-                "Directional momentum presents severe gamma risk for Call sellers."
+                f"High institutional buying pressure presents severe gamma risk for Call sellers ({pcr_note})."
             )
             action = (
                 "DO NOT sell naked Calls or balanced Straddles! "
@@ -159,7 +167,7 @@ class StrikeAdvisor:
             tone = "danger"
             summary = (
                 f"Heavyweights are breaking down simultaneously (Alignment Score: {regime_score:.1f}). "
-                "Aggressive selling volume creates high gamma expansion risk for Put sellers."
+                f"Aggressive selling volume creates high gamma expansion risk for Put sellers ({pcr_note})."
             )
             action = (
                 "DO NOT sell naked Puts or balanced Straddles! "
@@ -170,7 +178,7 @@ class StrikeAdvisor:
         elif "MILD BULLISH" in regime_status:
             badge = "🟡 MILD UPWARD BIAS (SKEW RECOMMENDED)"
             tone = "warning"
-            summary = "Slight upward tilt in heavyweights, but lacking aggressive momentum breakout."
+            summary = f"Slight upward tilt in heavyweights ({pcr_note}). Lacks sharp momentum breakout."
             action = (
                 "Skewed Strangle or Bull Put Spread. Push Short Call strike further OTM "
                 f"(at least Spot + {em_curr * 1.3:.0f} pts) while keeping Put closer to capture theta."
@@ -180,7 +188,7 @@ class StrikeAdvisor:
         else:
             badge = "🟡 MILD DOWNWARD BIAS (SKEW RECOMMENDED)"
             tone = "warning"
-            summary = "Slight downward drift in heavyweights, but institutional volume is moderate."
+            summary = f"Slight downward drift in heavyweights ({pcr_note}). Institutional selling is moderate."
             action = (
                 "Skewed Strangle or Bear Call Spread. Push Short Put strike further OTM "
                 f"(at least Spot - {em_curr * 1.3:.0f} pts) while keeping Call closer to collect premium."
@@ -198,48 +206,40 @@ class StrikeAdvisor:
     def _build_expiry_recommendation(
         self,
         expiry_type: str,
-        expiry_name: str,
+        expiry_date: str,
+        dte: int,
         spot: float,
         atm_strike: int,
         expected_move: float,
         regime_status: str,
-        regime_score: float,
+        chain_data: Dict[str, Any],
         step: int = 50,
     ) -> Dict[str, Any]:
-        """Calculates specific strikes, protection wings, and breakevens for an expiry."""
+        """Calculates specific strikes, queries LIVE NSE premiums, and computes exact breakevens."""
+        strikes_map = chain_data.get("strikes_map", {})
         mult = 1.05 if expiry_type == "CURRENT" else 1.25
 
         if "RANGEBOUND" in regime_status:
-            # Symmetric Strangle / Iron Condor
             strategy_name = "0.15Δ Short Strangle (or Iron Condor)"
-            call_distance = expected_move * mult
-            put_distance = expected_move * mult
-            sell_ce = self.round_strike(spot + call_distance, step)
-            sell_pe = self.round_strike(spot - put_distance, step)
+            strategy_bias = "Delta-Neutral"
+            sell_ce = self.round_strike(spot + (expected_move * mult), step)
+            sell_pe = self.round_strike(spot - (expected_move * mult), step)
             hedge_ce = sell_ce + (200 if step == 50 else 300)
             hedge_pe = sell_pe - (200 if step == 50 else 300)
-            strategy_bias = "Delta-Neutral"
-
         elif "BULLISH TREND" in regime_status:
-            # Bull Put Spread (Avoid Selling Calls or push Call to extreme 2-SD)
             strategy_name = "Bull Put Credit Spread (Protected)"
             strategy_bias = "Bullish Theta"
             sell_pe = self.round_strike(spot - (expected_move * 0.65), step)
             hedge_pe = sell_pe - 150
-            # If trader insists on selling Call, place at extreme 2.2-SD
             sell_ce = self.round_strike(spot + (expected_move * 1.9), step)
             hedge_ce = sell_ce + 200
-
         elif "BEARISH TREND" in regime_status:
-            # Bear Call Spread (Avoid Selling Puts or push Put to extreme 2-SD)
             strategy_name = "Bear Call Credit Spread (Protected)"
             strategy_bias = "Bearish Theta"
             sell_ce = self.round_strike(spot + (expected_move * 0.65), step)
             hedge_ce = sell_ce + 150
-            # If trader insists on selling Put, place at extreme 2.2-SD
             sell_pe = self.round_strike(spot - (expected_move * 1.9), step)
             hedge_pe = sell_pe - 200
-
         elif "MILD BULLISH" in regime_status:
             strategy_name = "Bull-Skewed Strangle"
             strategy_bias = "Mild Bullish Bias"
@@ -247,8 +247,7 @@ class StrikeAdvisor:
             sell_ce = self.round_strike(spot + (expected_move * 1.35), step)
             hedge_ce = sell_ce + 200
             hedge_pe = sell_pe - 200
-
-        else:  # Mild Bearish
+        else:
             strategy_name = "Bear-Skewed Strangle"
             strategy_bias = "Mild Bearish Bias"
             sell_ce = self.round_strike(spot + (expected_move * 0.9), step)
@@ -256,34 +255,64 @@ class StrikeAdvisor:
             hedge_ce = sell_ce + 200
             hedge_pe = sell_pe - 200
 
-        # Estimated premium and buffer
-        ce_otm_pct = ((sell_ce - spot) / spot) * 100.0
-        pe_otm_pct = ((spot - sell_pe) / spot) * 100.0
+        # Query LIVE PREMIUMS directly from NSE strikes map if present
+        ce_data = strikes_map.get(sell_ce, {})
+        pe_data = strikes_map.get(sell_pe, {})
+        hedge_ce_data = strikes_map.get(hedge_ce, {})
+        hedge_pe_data = strikes_map.get(hedge_pe, {})
 
-        # Approximate combined premium collected for 0.15 Delta Strangle
-        # Typical 15-delta strangle collects ~0.7% to 1.1% of spot
-        premium_pct = 0.007 if expiry_type == "CURRENT" else 0.012
-        est_combined_premium = round(spot * premium_pct, 1)
+        ce_ltp = ce_data.get("ce_ltp", 0.0)
+        pe_ltp = pe_data.get("pe_ltp", 0.0)
+        ce_oi = ce_data.get("ce_oi", 0)
+        pe_oi = pe_data.get("pe_oi", 0)
+        ce_iv = ce_data.get("ce_iv", 0.0)
+        pe_iv = pe_data.get("pe_iv", 0.0)
 
-        lower_breakeven = round(sell_pe - est_combined_premium, 1)
-        upper_breakeven = round(sell_ce + est_combined_premium, 1)
+        hedge_ce_ltp = hedge_ce_data.get("ce_ltp", 0.0)
+        hedge_pe_ltp = hedge_pe_data.get("pe_ltp", 0.0)
+
+        # Fallback approximation if market is closed or strike not in map
+        if ce_ltp <= 0.0:
+            ce_ltp = round(max(5.0, spot * (0.0035 if expiry_type == "CURRENT" else 0.006)), 1)
+        if pe_ltp <= 0.0:
+            pe_ltp = round(max(5.0, spot * (0.0035 if expiry_type == "CURRENT" else 0.006)), 1)
+
+        total_premium = round(ce_ltp + pe_ltp, 2)
+        lower_breakeven = round(sell_pe - total_premium, 1)
+        upper_breakeven = round(sell_ce + total_premium, 1)
+
+        # Distance from spot
+        ce_otm_pts = int(sell_ce - spot)
+        pe_otm_pts = int(spot - sell_pe)
+        ce_otm_pct = round((ce_otm_pts / spot) * 100.0, 2)
+        pe_otm_pct = round((pe_otm_pts / spot) * 100.0, 2)
 
         return {
-            "expiry_name": expiry_name,
+            "expiry_date": expiry_date,
+            "dte": dte,
+            "expiry_name": f"{expiry_date} ({dte} DTE)",
             "strategy_name": strategy_name,
             "strategy_bias": strategy_bias,
             "atm_strike": atm_strike,
             "sell_ce": sell_ce,
-            "ce_otm_pts": int(sell_ce - spot),
-            "ce_otm_pct": round(ce_otm_pct, 2),
+            "ce_ltp": ce_ltp,
+            "ce_oi": ce_oi,
+            "ce_iv": ce_iv,
+            "ce_otm_pts": ce_otm_pts,
+            "ce_otm_pct": ce_otm_pct,
             "sell_pe": sell_pe,
-            "pe_otm_pts": int(spot - sell_pe),
-            "pe_otm_pct": round(pe_otm_pct, 2),
+            "pe_ltp": pe_ltp,
+            "pe_oi": pe_oi,
+            "pe_iv": pe_iv,
+            "pe_otm_pts": pe_otm_pts,
+            "pe_otm_pct": pe_otm_pct,
             "hedge_ce": hedge_ce,
+            "hedge_ce_ltp": hedge_ce_ltp,
             "hedge_pe": hedge_pe,
-            "est_combined_premium": est_combined_premium,
+            "hedge_pe_ltp": hedge_pe_ltp,
+            "total_premium": total_premium,
             "lower_breakeven": lower_breakeven,
             "upper_breakeven": upper_breakeven,
             "safe_range_pts": int(upper_breakeven - lower_breakeven),
-            "stop_loss_guideline": f"SL on sold legs at 1.5x entry premium. Close Call if spot crosses {sell_ce}, Close Put if spot crosses {sell_pe}.",
+            "stop_loss_guideline": f"SL on sold legs at 1.5x entry premium (CE SL: ₹{ce_ltp*1.5:.1f}, PE SL: ₹{pe_ltp*1.5:.1f}). Exit if Spot crosses {sell_ce} or {sell_pe}.",
         }

@@ -12,6 +12,7 @@ from typing import Dict, Any, Tuple
 import pandas as pd
 from data.nse_provider import NSEDataProvider
 from data.yfinance_provider import YFinanceProvider
+from data.nse_option_chain import NSEOptionChainProvider
 from config import NIFTY_50_WEIGHTS, DEFAULT_NIFTY_VALUE
 
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity/scratch/nifty50-pulse/.vol_cache.json")
@@ -23,7 +24,21 @@ class DataManager:
     def __init__(self):
         self.nse_provider = NSEDataProvider()
         self.yf_provider = YFinanceProvider()
+        self.option_chain_provider = NSEOptionChainProvider()
         self.cached_avg_volumes = self._load_volume_cache()
+
+    def get_live_option_chains(self) -> Tuple[Dict[str, Any], Dict[str, Any], list]:
+        """
+        Fetches live option chain data for Current and Upcoming official NSE expiries.
+        """
+        expiries = self.option_chain_provider.get_official_expiries()
+        curr_chain = {}
+        next_chain = {}
+        if expiries:
+            curr_chain = self.option_chain_provider.fetch_live_option_chain(expiries[0])
+            if len(expiries) >= 2:
+                next_chain = self.option_chain_provider.fetch_live_option_chain(expiries[1])
+        return curr_chain, next_chain, expiries
 
     def _load_volume_cache(self) -> Dict[str, float]:
         """Loads cached 20-day average volumes from disk if available."""
