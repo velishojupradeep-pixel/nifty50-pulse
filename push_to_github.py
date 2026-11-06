@@ -6,6 +6,15 @@ No Xcode command line tools or system git installation required!
 
 import sys
 import os
+import ssl
+import certifi
+
+# Fix macOS Python SSL certificate verification
+os.environ["SSL_CERT_FILE"] = certifi.where()
+os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+ssl_context = ssl.create_default_context(cafile=certifi.where())
+ssl._create_default_https_context = lambda: ssl_context
+
 from dulwich.repo import Repo
 from dulwich.porcelain import push
 
@@ -15,10 +24,12 @@ REPO_PATH = os.path.dirname(os.path.abspath(__file__))
 def push_repo(remote_url: str, token: str = ""):
     repo = Repo(REPO_PATH)
     
-    # If token provided and URL is HTTPS, embed token
+    # If token provided and URL is HTTPS, format with GitHub token authentication
     target_url = remote_url.strip()
     if token and target_url.startswith("https://") and "@" not in target_url:
-        target_url = target_url.replace("https://", f"https://{token}@")
+        # GitHub expects https://<token>@ or https://oauth2:<token>@
+        clean_url = target_url.replace("https://", "")
+        target_url = f"https://oauth2:{token}@{clean_url}"
 
     print(f"Pushing 'main' branch to remote: {remote_url} ...")
     try:
