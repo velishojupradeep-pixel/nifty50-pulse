@@ -15,20 +15,23 @@ from config import (
 )
 from core.weights import WeightEngine
 from core.sectors import SectorAnalyzer
+from core.advisor import StrikeAdvisor
 
 
 class AnalyticsEngine:
     """Core analytics engine computing option seller signals and constituent metrics."""
 
-    def __init__(self):
+    def __init__(self, default_iv: float = 13.5):
         self.weight_engine = WeightEngine()
         self.sector_analyzer = SectorAnalyzer()
+        self.advisor = StrikeAdvisor(default_iv=default_iv)
 
     def process_market_data(
         self,
         df: pd.DataFrame,
         nifty_meta: Dict[str, Any],
         avg_volumes: Dict[str, float] = None,
+        custom_iv: float = None,
     ) -> Dict[str, Any]:
         """
         Takes raw constituent data and computes complete analytics:
@@ -85,6 +88,14 @@ class AnalyticsEngine:
 
         regime_analysis = self._calculate_option_regime(df, top5_df, top10_df)
 
+        # 5b. Generate Option Seller Strike Verdict and Recommendations
+        advisor_data = self.advisor.generate_verdict_and_strikes(
+            nifty_meta=nifty_meta,
+            regime=regime_analysis,
+            top5_df=top5_df,
+            custom_iv=custom_iv,
+        )
+
         # 6. Gainers & Losers
         by_pct_gainers = df.sort_values(by="pChange", ascending=False).head(5)
         by_pct_losers = df.sort_values(by="pChange", ascending=True).head(5)
@@ -128,6 +139,7 @@ class AnalyticsEngine:
                 "bearish_weight": round(bearish_weight, 1),
             },
             "regime": regime_analysis,
+            "advisor": advisor_data,
             "top5_heavyweights": top5_df.sort_values(by="weight", ascending=False),
             "top10_heavyweights": top10_df.sort_values(by="weight", ascending=False),
             "by_pct_gainers": by_pct_gainers,
