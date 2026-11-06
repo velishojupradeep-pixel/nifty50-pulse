@@ -128,13 +128,12 @@ st.markdown(
 
 
 @st.cache_resource
-def get_services():
-    data_mgr = DataManager()
-    engine = AnalyticsEngine()
-    return data_mgr, engine
+def get_data_manager():
+    return DataManager()
 
 
-data_manager, analytics_engine = get_services()
+data_manager = get_data_manager()
+analytics_engine = AnalyticsEngine()
 
 # --- SIDEBAR CONFIGURATION ---
 st.sidebar.title("⚡ Option Radar Settings")
