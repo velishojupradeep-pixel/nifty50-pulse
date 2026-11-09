@@ -11,6 +11,8 @@ __pycache__/
 
 # Cache & Local Files
 .vol_cache.json
+.nse_chain_cache.json
+*.cache.json
 .DS_Store
 *.log
 

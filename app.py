@@ -184,6 +184,9 @@ with st.spinner("Fetching live constituent data & official NSE option chain...")
     curr_chain, next_chain, official_expiries = (
         data_manager.get_live_option_chains()
     )
+
+    # Fetch live GIFT NIFTY from NSE IX
+    gift_nifty = data_manager.get_gift_nifty()
     
     market = analytics_engine.process_market_data(
         df_raw,
@@ -239,7 +242,40 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-col1, col2, col3, col4, col5 = st.columns(5)
+# GIFT Nifty metrics calculation
+gift_price = gift_nifty.get("lastPrice", ltp)
+gift_change = gift_nifty.get("change", 0.0)
+gift_pct = gift_nifty.get("pChange", 0.0)
+gift_color = "pos-val" if gift_change >= 0 else "neg-val"
+gift_sign = "+" if gift_change >= 0 else ""
+
+# Spread / Gap vs Nifty 50 Spot
+spread = round(gift_price - ltp, 1)
+spread_sign = "+" if spread >= 0 else ""
+if spread > 15:
+    spread_desc = f"<span class='pos-val'>{spread_sign}{spread:,.1f} Premium (Gap-Up)</span>"
+elif spread < -15:
+    spread_desc = f"<span class='neg-val'>{spread_sign}{spread:,.1f} Discount (Gap-Down)</span>"
+else:
+    spread_desc = f"<span class='neutral-val'>{spread_sign}{spread:,.1f} Par (Flat)</span>"
+
+col_gift, col1, col2, col3, col4, col5 = st.columns([1.15, 1.15, 1.0, 1.0, 1.1, 1.0])
+
+with col_gift:
+    st.markdown(
+        f"""
+        <div class="metric-container">
+            <div class="metric-label" style="display: flex; justify-content: space-between;">
+                <span>GIFT NIFTY</span>
+                <span style="font-size: 0.7rem; color: #64b5f6;">NSE IX</span>
+            </div>
+            <div class="metric-val">{gift_price:,.2f}</div>
+            <div class="metric-sub {gift_color}">{gift_sign}{gift_change:,.1f} ({gift_sign}{gift_pct:.2f}%)</div>
+            <div style="font-size: 0.75rem; margin-top: 2px;">Spread: {spread_desc}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 with col1:
     st.markdown(
@@ -248,6 +284,7 @@ with col1:
             <div class="metric-label">NIFTY 50 SPOT</div>
             <div class="metric-val">{ltp:,.2f}</div>
             <div class="metric-sub {color_class}">{sign}{change:,.2f} ({sign}{p_change:.2f}%)</div>
+            <div style="font-size: 0.75rem; color: #848e9c; margin-top: 2px;">Prev: {n_meta.get('previousClose', ltp):,.1f}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -276,7 +313,7 @@ with col3:
         <div class="metric-container">
             <div class="metric-label">WEIGHTED BREADTH</div>
             <div class="metric-val"><span class="pos-val">{b_wt:.1f}%</span> : <span class="neg-val">{br_wt:.1f}%</span></div>
-            <div class="metric-sub neutral-val">Bullish vs Bearish Index Weight</div>
+            <div class="metric-sub neutral-val">Bull vs Bear Weight</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -289,7 +326,7 @@ with col4:
     st.markdown(
         f"""
         <div class="metric-container">
-            <div class="metric-label">HEAVYWEIGHT ALIGNMENT</div>
+            <div class="metric-label">ALIGNMENT METER</div>
             <div class="metric-val">{score_sign}{regime_score:.1f} / 100</div>
             <div class="metric-sub">{regime.get('badge')}</div>
         </div>
@@ -306,7 +343,7 @@ with col5:
         <div class="metric-container">
             <div class="metric-label">TOP 5 POINTS PULL</div>
             <div class="metric-val {t5_class}">{t5_sign}{top5_pts:.1f} pts</div>
-            <div class="metric-sub neutral-val">Out of Total {regime.get('total_points', 0.0):+.1f} pts</div>
+            <div class="metric-sub neutral-val">Total: {regime.get('total_points', 0.0):+.1f} pts</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -547,6 +584,179 @@ with st.expander("📊 View Live NSE Option Chain Table (Direct from nseindia.co
             hide_index=True,
             use_container_width=True,
         )
+
+st.markdown("---")
+
+# --- SECTION: INSTITUTIONAL LARGE-QUANTITY OPTION SELLER DESK ---
+from core.institutional import InstitutionalAdvisor
+
+st.subheader("🏛️ Institutional Desk: Large-Quantity Option Selling (Heavy Lot Sizing)")
+st.caption(
+    "Strategic execution framework for deploying 50 to 1,000+ lots: order slicing (NSE freeze limit: 1,800 units / 72 lots), "
+    "strike depth grading, margin relief via wings & dynamic adjustment protocols."
+)
+
+inst_tab1, inst_tab2, inst_tab3, inst_tab4 = st.tabs([
+    "🛡️ Hedged Large-Lot Playbook",
+    "💧 Strike Liquidity & Slicing",
+    "🔄 Systematic Adjustment Protocol",
+    "💰 Capital & Margin Sizing Calculator",
+])
+
+with inst_tab1:
+    h_col1, h_col2 = st.columns(2)
+    with h_col1:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid #00c853;">
+                <div class="strike-title">
+                    <span>1. Defined-Risk Institutional Iron Condor</span>
+                    <span style="font-size: 0.8rem; color: #00e676; background: rgba(0,230,118,0.1); padding: 2px 8px; border-radius: 4px;">Recommended for 100+ Lots</span>
+                </div>
+                <div style="font-size: 0.9rem; color: #cfd8dc; margin-bottom: 8px;">
+                    <b>Structure:</b> Sell {curr_rec['sell_ce']} CE & {curr_rec['sell_pe']} PE | Buy {curr_rec['hedge_ce']} CE & {curr_rec['hedge_pe']} PE (Wings)
+                </div>
+                <div style="font-size: 0.85rem; color: #848e9c; line-height: 1.5;">
+                    • <b>Overnight Tail-Risk Protection:</b> Unhedged strangles risk unlimited loss on 300+ pt freak gap-openings. Wings strictly cap max possible loss.<br>
+                    • <b>Massive Margin Relief:</b> Margin drops from <b>₹1.25 Lakhs</b> (Naked) to <b>~₹38,000</b> per lot (Hedged). Enables <b>3.3x capital efficiency</b>.<br>
+                    • <b>Regulatory Safety:</b> Fully compliant with SEBI peak margin rules; eliminates broker margin penalty spikes during midday IV expansion.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with h_col2:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid #ffb300;">
+                <div class="strike-title">
+                    <span>2. 1:2 Credit Ratio Spread (Directional Drift)</span>
+                    <span style="font-size: 0.8rem; color: #ffb300; background: rgba(255,179,0,0.1); padding: 2px 8px; border-radius: 4px;">Zero Opposite Risk</span>
+                </div>
+                <div style="font-size: 0.9rem; color: #cfd8dc; margin-bottom: 8px;">
+                    <b>Structure:</b> Buy 1x Near-OTM ({curr_rec['sell_ce'] - 50} CE) & Sell 2x Far-OTM ({curr_rec['sell_ce']} CE)
+                </div>
+                <div style="font-size: 0.85rem; color: #848e9c; line-height: 1.5;">
+                    • <b>Zero Risk on Reversal:</b> If NIFTY reverses and tanks, the position retains net credit with zero downside risk.<br>
+                    • <b>Sweet Spot P&L Peak:</b> Maximum profit is achieved if NIFTY expires right at the sold short strike.<br>
+                    • <b>Ideal for Trending Breakouts:</b> Deploy Bull Put 1:2 Ratios when heavyweights surge together with RVOL > 1.8x.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+with inst_tab2:
+    ce_liq = InstitutionalAdvisor.evaluate_strike_liquidity(curr_rec.get("ce_oi", 0))
+    pe_liq = InstitutionalAdvisor.evaluate_strike_liquidity(curr_rec.get("pe_oi", 0))
+
+    st.markdown("**Live Strike Execution Depth (Current Expiry Recommendations)**")
+    l_col1, l_col2 = st.columns(2)
+    with l_col1:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="padding: 14px 16px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <b>Sell {curr_rec['sell_ce']} CE</b>
+                    <span style="color: {ce_liq['color']}; font-weight: 700; font-size: 0.85rem;">{ce_liq['badge']}</span>
+                </div>
+                <div style="font-size: 0.82rem; color: #848e9c; margin-top: 4px;">
+                    Open Interest: <b>{curr_rec.get('ce_oi', 0):,} contracts</b> | Expected Slippage: <b>{ce_liq['slippage_risk']}</b>
+                </div>
+                <div style="font-size: 0.8rem; color: #cfd8dc; margin-top: 4px;">{ce_liq['comment']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with l_col2:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="padding: 14px 16px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <b>Sell {curr_rec['sell_pe']} PE</b>
+                    <span style="color: {pe_liq['color']}; font-weight: 700; font-size: 0.85rem;">{pe_liq['badge']}</span>
+                </div>
+                <div style="font-size: 0.82rem; color: #848e9c; margin-top: 4px;">
+                    Open Interest: <b>{curr_rec.get('pe_oi', 0):,} contracts</b> | Expected Slippage: <b>{pe_liq['slippage_risk']}</b>
+                </div>
+                <div style="font-size: 0.8rem; color: #cfd8dc; margin-top: 4px;">{pe_liq['comment']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("**⚡ NSE Freeze Limit Order Slicing Calculator**")
+    test_lots = st.select_slider(
+        "Select Planned Quantity to Deploy (Lots)",
+        options=[20, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000],
+        value=200,
+        key="slice_lots_slider",
+    )
+    s_calc = InstitutionalAdvisor.calculate_order_slicing(test_lots)
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Total Contracts", f"{s_calc['total_quantity']:,} units")
+    s2.metric("NSE Order Freeze Limit", f"{s_calc['freeze_limit_per_order']:,} units")
+    s3.metric("Required Slices", f"{s_calc['num_slices']} orders")
+    s4.metric("Per-Slice Size", f"{s_calc['slice_size_lots']} lots ({s_calc['slice_size_qty']:,} qty)")
+    st.info(f"💡 **Execution Rule:** {s_calc['execution_tip']}")
+
+with inst_tab3:
+    st.markdown("**Systematic 3-Phase Adjustment Protocol (When NIFTY Tests Your Sold Legs)**")
+    adj_steps = InstitutionalAdvisor.get_institutional_adjustment_playbook(
+        spot=ltp,
+        sell_ce=curr_rec['sell_ce'],
+        sell_pe=curr_rec['sell_pe'],
+        ce_ltp=curr_rec['ce_ltp'],
+        pe_ltp=curr_rec['pe_ltp'],
+    )
+    for step in adj_steps:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="margin-bottom: 12px; padding: 14px 18px;">
+                <div style="font-weight: 700; color: #64b5f6; font-size: 0.95rem; margin-bottom: 4px;">{step['step']}</div>
+                <div style="font-size: 0.85rem; color: #ffb300; margin-bottom: 4px;"><b>Trigger:</b> {step['trigger']}</div>
+                <div style="font-size: 0.85rem; color: #eaecef; margin-bottom: 4px;"><b>Action:</b> {step['action']}</div>
+                <div style="font-size: 0.8rem; color: #848e9c;"><b>Objective:</b> {step['goal']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+with inst_tab4:
+    st.markdown("**Capital Allocation & Margin Multiplier Calculator**")
+    cap_val = st.slider(
+        "Your Trading Capital Dedicated to Option Selling (₹)",
+        min_value=1_000_000,
+        max_value=50_000_000,
+        value=5_000_000,
+        step=500_000,
+        format="₹%d",
+        key="cap_calc_slider",
+    )
+    c_res = InstitutionalAdvisor.calculate_capital_and_margin(cap_val, ltp)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Capital Pool", format_inr(c_res['capital_inr']))
+    c2.metric("Safe Deploy Reserve (75%)", format_inr(c_res['safe_deploy_capital']))
+    c3.metric("Naked Capacity (~₹1.25L/lot)", f"{c_res['naked_max_lots']} lots")
+    c4.metric(f"Hedged Capacity ({c_res['capacity_multiplier']}x More)", f"{c_res['hedged_max_lots']} lots")
+
+    st.markdown(
+        f"""
+        <div class="breakeven-corridor" style="text-align: left; padding: 12px 18px;">
+            <div style="font-size: 0.9rem; color: #eaecef; font-weight: 600;">
+                💡 <b>Institutional Efficiency Summary:</b>
+            </div>
+            <div style="font-size: 0.85rem; color: #cfd8dc; margin-top: 4px;">
+                With <b>{format_inr(cap_val)}</b>, deploying naked strangles restricts you to only <b>{c_res['naked_max_lots']} lots</b> with unlimited gap risk.
+                By converting to an <b>Institutional Defined-Risk Iron Condor</b> with cheap protection wings, your safe deployment expands to <b>{c_res['hedged_max_lots']} lots ({c_res['capacity_multiplier']}x larger size)</b>,
+                saving <b>{c_res['margin_saved_pct']}% exchange margin</b> while leaving a 25% cash buffer ({format_inr(cap_val * 0.25)}) against intraday volatility spikes.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown("---")
 

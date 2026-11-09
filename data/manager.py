@@ -13,6 +13,7 @@ import pandas as pd
 from data.nse_provider import NSEDataProvider
 from data.yfinance_provider import YFinanceProvider
 from data.nse_option_chain import NSEOptionChainProvider
+from data.gift_nifty_provider import GiftNiftyProvider
 from config import NIFTY_50_WEIGHTS, DEFAULT_NIFTY_VALUE
 
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity/scratch/nifty50-pulse/.vol_cache.json")
@@ -25,7 +26,12 @@ class DataManager:
         self.nse_provider = NSEDataProvider()
         self.yf_provider = YFinanceProvider()
         self.option_chain_provider = NSEOptionChainProvider()
+        self.gift_nifty_provider = GiftNiftyProvider()
         self.cached_avg_volumes = self._load_volume_cache()
+
+    def get_gift_nifty(self) -> Dict[str, Any]:
+        """Fetches live GIFT NIFTY quote from NSE IX."""
+        return self.gift_nifty_provider.fetch_gift_nifty()
 
     def get_live_option_chains(self) -> Tuple[Dict[str, Any], Dict[str, Any], list]:
         """
