@@ -220,9 +220,23 @@ p_change = n_meta.get("pChange", 0.0)
 color_class = "pos-val" if change >= 0 else "neg-val"
 sign = "+" if change >= 0 else ""
 
-st.title("NIFTY 50 Pulse & Option Seller Radar")
-st.caption(
-    "Real-time constituent weightage tracker, index point contribution, heavyweight alignment, and RVOL analysis."
+st.markdown(
+    """
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div>
+            <h1 style="margin: 0; padding: 0; font-size: 2.2rem; color: #eaecef;">⚡ NIFTY 50 Pulse & Option Seller Radar</h1>
+            <div style="color: #848e9c; font-size: 0.95rem; margin-top: 2px;">
+                Real-time constituent weightage tracker, index point contribution, heavyweight alignment, and live NSE Option Chain.
+            </div>
+        </div>
+        <div>
+            <a href="https://www.nseindia.com/option-chain" target="_blank" style="background: #1976d2; color: #ffffff; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.4);">
+                🌐 Open Official NSE Option Chain ↗
+            </a>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -345,12 +359,19 @@ st.markdown(
 rec_col1, rec_col2 = st.columns(2)
 
 live_badge_text = (
-    f"🟢 Verified Live Data Direct from <a href='https://www.nseindia.com/option-chain' target='_blank' style='color: #64b5f6; text-decoration: underline;'>NSE India Option Chain</a> ({advisor['nse_timestamp']})"
+    f"🟢 Verified Live Data Direct from <a href='https://www.nseindia.com/option-chain' target='_blank' style='color: #64b5f6; font-weight: 600; text-decoration: underline;'>NSE India Option Chain</a> ({advisor['nse_timestamp']})"
     if advisor.get("is_live_nse")
-    else "⚡ Real-time Analytics Engine"
+    else "⚡ Real-time Analytics Engine (NSE Baseline)"
 )
 st.markdown(
-    f"<div style='margin-bottom: 12px; font-size: 0.82rem; color: #90a4ae;'>{live_badge_text} &nbsp;|&nbsp; Official Expiries directly from NSE</div>",
+    f"""
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; background: #131722; padding: 10px 16px; border-radius: 6px; border: 1px solid #2a2e39;">
+        <span style="font-size: 0.85rem; color: #90a4ae;">{live_badge_text} &nbsp;|&nbsp; Official Expiries directly from NSE</span>
+        <a href="https://www.nseindia.com/option-chain" target="_blank" style="color: #64b5f6; font-size: 0.85rem; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+            🔗 Open nseindia.com/option-chain in new tab ↗
+        </a>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -486,7 +507,17 @@ with rec_col2:
 
 # Live NSE Option Chain Table Expander
 with st.expander("📊 View Live NSE Option Chain Table (Direct from nseindia.com/option-chain)", expanded=False):
-    st.caption(f"Official live strike chain from NSE India for current expiry **{curr_rec['expiry_date']}** (Underlying: ₹{advisor.get('atm_strike', 24600):,})")
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="color: #848e9c; font-size: 0.88rem;">Official live strike chain from NSE India for current expiry <b>{curr_rec['expiry_date']}</b> (Underlying: ₹{advisor.get('atm_strike', 24600):,})</span>
+            <a href="https://www.nseindia.com/option-chain" target="_blank" style="background: rgba(25, 118, 210, 0.15); color: #64b5f6; border: 1px solid #1976d2; padding: 4px 12px; border-radius: 4px; text-decoration: none; font-size: 0.82rem; font-weight: 600;">
+                ↗ Open nseindia.com/option-chain
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if curr_chain and "strikes_map" in curr_chain:
         atm = advisor["atm_strike"]
         strikes_to_show = [s for s in sorted(curr_chain["strikes_map"].keys()) if abs(s - atm) <= 600]

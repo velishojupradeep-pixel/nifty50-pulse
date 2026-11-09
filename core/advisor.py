@@ -280,6 +280,27 @@ class StrikeAdvisor:
         ce_iv = float(ce_data.get("ce_iv", 0.0))
         pe_iv = float(pe_data.get("pe_iv", 0.0))
 
+        # If chosen strike was untraded (0.0 LTP), pick nearest traded strike in live book
+        if ce_ltp <= 0.0 and strikes_map:
+            valid_ce = [s for s, d in strikes_map.items() if d.get("ce_ltp", 0.0) > 0.0]
+            if valid_ce:
+                nearest_s = min(valid_ce, key=lambda s: abs(s - sell_ce))
+                ce_ltp = float(strikes_map[nearest_s].get("ce_ltp", 0.0))
+                if ce_oi <= 0:
+                    ce_oi = int(strikes_map[nearest_s].get("ce_oi", 0))
+                if ce_iv <= 0:
+                    ce_iv = float(strikes_map[nearest_s].get("ce_iv", 0.0))
+
+        if pe_ltp <= 0.0 and strikes_map:
+            valid_pe = [s for s, d in strikes_map.items() if d.get("pe_ltp", 0.0) > 0.0]
+            if valid_pe:
+                nearest_s = min(valid_pe, key=lambda s: abs(s - sell_pe))
+                pe_ltp = float(strikes_map[nearest_s].get("pe_ltp", 0.0))
+                if pe_oi <= 0:
+                    pe_oi = int(strikes_map[nearest_s].get("pe_oi", 0))
+                if pe_iv <= 0:
+                    pe_iv = float(strikes_map[nearest_s].get("pe_iv", 0.0))
+
         hedge_ce_ltp = float(hedge_ce_data.get("ce_ltp", 0.0))
         hedge_pe_ltp = float(hedge_pe_data.get("pe_ltp", 0.0))
 

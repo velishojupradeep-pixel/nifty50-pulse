@@ -33,13 +33,28 @@ class NSEOptionChainProvider:
         self.disk_cache = self._load_disk_cache()
 
     def _load_disk_cache(self) -> Dict[str, Any]:
-        """Loads cached NSE option chain snapshot from disk."""
+        """Loads cached NSE option chain snapshot from disk or bundled seed."""
+        # 1. Try runtime cache
         try:
             if os.path.exists(CACHE_FILE):
                 with open(CACHE_FILE, "r") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    if data:
+                        return data
         except Exception:
             pass
+
+        # 2. Try bundled repository seed (vital for Streamlit Cloud / AWS datacenter instances)
+        seed_path = os.path.join(os.path.dirname(__file__), "nse_chain_seed.json")
+        try:
+            if os.path.exists(seed_path):
+                with open(seed_path, "r") as f:
+                    data = json.load(f)
+                    if data:
+                        return data
+        except Exception:
+            pass
+
         return {}
 
     def _save_disk_cache(self):
@@ -167,8 +182,15 @@ class NSEOptionChainProvider:
         except Exception:
             pass
 
-        # If live fetch timed out, return last saved authentic NSE snapshot
+        # If live fetch timed out or blocked by cloud hosting IP, return last saved authentic NSE snapshot or seed
         cached_chain = self.disk_cache.get(f"chain_{expiry}")
+        if not cached_chain:
+            # Check any available chain in cache/seed
+            for k, v in self.disk_cache.items():
+                if k.startswith("chain_") and isinstance(v, dict) and "strikes_map" in v:
+                    cached_chain = v
+                    break
+
         if cached_chain:
             # Restore integer keys
             s_map = {int(k): v for k, v in cached_chain.get("strikes_map", {}).items()}
