@@ -10,6 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 
 from data.manager import DataManager
 from core.engine import AnalyticsEngine
+from core.technicals import TechnicalAnalyzer
 from utils.formatting import (
     format_inr,
     format_volume,
@@ -129,6 +130,7 @@ st.markdown(
 
 data_manager = DataManager()
 analytics_engine = AnalyticsEngine()
+tech_analyzer = TechnicalAnalyzer()
 
 # --- SIDEBAR CONFIGURATION ---
 st.sidebar.title("⚡ Option Radar Settings")
@@ -221,6 +223,15 @@ change = n_meta.get("change", 0.0)
 p_change = n_meta.get("pChange", 0.0)
 color_class = "pos-val" if change >= 0 else "neg-val"
 sign = "+" if change >= 0 else ""
+
+# Technical Indicators Summary for Option Sellers
+tech_data = tech_analyzer.get_technical_summary(
+    spot=ltp,
+    prev_close=n_meta.get("previousClose", ltp),
+    day_high=n_meta.get("dayHigh", None),
+    day_low=n_meta.get("dayLow", None),
+    day_open=n_meta.get("open", None),
+)
 
 st.markdown(
     """
@@ -756,6 +767,295 @@ with inst_tab4:
         """,
         unsafe_allow_html=True,
     )
+
+st.markdown("---")
+
+# --- SECTION: TECHNICAL INDICATOR RADAR FOR OPTION SELLERS ---
+st.subheader("📈 Technical Indicator Radar & Option Seller Levels")
+st.caption(
+    "Mathematical and derivatives indicator levels translated into plain-English definitions and "
+    "specific tactical recommendations for option selling, strike placement, and gamma defense."
+)
+
+cpr_d = tech_data["cpr"]
+cam_d = tech_data["camarilla"]
+rsi_d = tech_data["rsi"]
+adx_d = tech_data["adx"]
+bb_d = tech_data["bollinger"]
+atr_d = tech_data["atr"]
+ma_d = tech_data["ma"]
+
+# Top 4-Metric Pulse Row
+t_col1, t_col2, t_col3, t_col4 = st.columns(4)
+
+with t_col1:
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {cpr_d['color']};">
+            <div class="metric-label">Central Pivot Range (CPR)</div>
+            <div class="metric-val" style="font-size: 1.3rem;">{cpr_d['width_pts']:.1f} pts</div>
+            <div class="metric-sub" style="color: {cpr_d['color']};">{cpr_d['badge']}</div>
+            <div style="font-size: 0.75rem; color: #848e9c; margin-top: 4px;">Pivot: ₹{cpr_d['pivot']:,.1f}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with t_col2:
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {cam_d['color']};">
+            <div class="metric-label">Camarilla Iron Condor Range</div>
+            <div class="metric-val" style="font-size: 1.3rem;">₹{cam_d['l3']:,.0f} - ₹{cam_d['h3']:,.0f}</div>
+            <div class="metric-sub" style="color: {cam_d['color']};">{cam_d['badge']}</div>
+            <div style="font-size: 0.75rem; color: #848e9c; margin-top: 4px;">Corridor: {cam_d['range_pts']:.0f} pts</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with t_col3:
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {adx_d['color']};">
+            <div class="metric-label">Trend Strength (ADX 14)</div>
+            <div class="metric-val" style="font-size: 1.3rem;">{adx_d['value']:.1f}</div>
+            <div class="metric-sub" style="color: {adx_d['color']};">{adx_d['badge']}</div>
+            <div style="font-size: 0.75rem; color: #848e9c; margin-top: 4px;">Threshold: &lt; 20 Sideways | &gt; 25 Trend</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with t_col4:
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {rsi_d['color']};">
+            <div class="metric-label">Momentum (RSI 14)</div>
+            <div class="metric-val" style="font-size: 1.3rem;">{rsi_d['value']:.1f}</div>
+            <div class="metric-sub" style="color: {rsi_d['color']};">{rsi_d['badge']}</div>
+            <div style="font-size: 0.75rem; color: #848e9c; margin-top: 4px;">ATR Buffer: ±{atr_d['safe_strike_buffer_pts']} pts</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+tech_tab1, tech_tab2, tech_tab3 = st.tabs([
+    "🎯 Pivot Ranges (CPR & Camarilla)",
+    "🌊 Volatility & Statistical Boundaries (Bollinger & ATR)",
+    "⚡ Trend Direction & Moving Averages (ADX, RSI, EMAs)",
+])
+
+with tech_tab1:
+    p_c1, p_c2 = st.columns(2)
+    with p_c1:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {cpr_d['color']};">
+                <div class="strike-title">
+                    <span>1. Central Pivot Range (CPR)</span>
+                    <span style="font-size: 0.8rem; color: {cpr_d['color']}; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px;">{cpr_d['badge']}</span>
+                </div>
+                <div style="font-size: 0.85rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {cpr_d['simple_term']}
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; text-align: center;">
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #848e9c;">TC (Top)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #eaecef;">₹{cpr_d['top']:,.1f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #848e9c;">Pivot (P)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #64b5f6;">₹{cpr_d['pivot']:,.1f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #848e9c;">BC (Bottom)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #eaecef;">₹{cpr_d['bottom']:,.1f}</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.85rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Option Seller Rule:</b><br>{cpr_d['suggestion']}
+                </div>
+                <div style="font-size: 0.8rem; color: #848e9c; margin-top: 8px; display: flex; justify-content: space-between;">
+                    <span><b>Classic R1:</b> ₹{cpr_d['r1']:,.0f} | <b>R2:</b> ₹{cpr_d['r2']:,.0f}</span>
+                    <span><b>Classic S1:</b> ₹{cpr_d['s1']:,.0f} | <b>S2:</b> ₹{cpr_d['s2']:,.0f}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with p_c2:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {cam_d['color']};">
+                <div class="strike-title">
+                    <span>2. Camarilla Intraday Matrix</span>
+                    <span style="font-size: 0.8rem; color: {cam_d['color']}; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px;">{cam_d['badge']}</span>
+                </div>
+                <div style="font-size: 0.85rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {cam_d['simple_term']}
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 12px; text-align: center;">
+                    <div style="background: #1a1e29; padding: 8px 4px; border-radius: 4px;">
+                        <div style="font-size: 0.7rem; color: #ff5252;">H4 (Breakout)</div>
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #eaecef;">₹{cam_d['h4']:,.0f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px 4px; border-radius: 4px;">
+                        <div style="font-size: 0.7rem; color: #ffb300;">H3 (Sell CE)</div>
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #00e676;">₹{cam_d['h3']:,.0f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px 4px; border-radius: 4px;">
+                        <div style="font-size: 0.7rem; color: #ffb300;">L3 (Sell PE)</div>
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #ff5252;">₹{cam_d['l3']:,.0f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px 4px; border-radius: 4px;">
+                        <div style="font-size: 0.7rem; color: #ff5252;">L4 (Breakdown)</div>
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #eaecef;">₹{cam_d['l4']:,.0f}</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.85rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Option Seller Rule:</b><br>{cam_d['suggestion']}
+                </div>
+                <div style="font-size: 0.8rem; color: #848e9c; margin-top: 8px;">
+                    🛡️ <b>Stop-Loss Rule:</b> If a 15-min candle closes beyond H4 (₹{cam_d['h4']:,.0f}) or L4 (₹{cam_d['l4']:,.0f}), square off or immediately hedge short legs.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+with tech_tab2:
+    v_c1, v_c2 = st.columns(2)
+    with v_c1:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {bb_d['color']};">
+                <div class="strike-title">
+                    <span>1. Bollinger Bands (20-Period, 2-SD)</span>
+                    <span style="font-size: 0.8rem; color: {bb_d['color']}; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px;">{bb_d['badge']}</span>
+                </div>
+                <div style="font-size: 0.85rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {bb_d['simple_term']} (Bandwidth: <b>{bb_d['bandwidth_pct']}%</b>)
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; text-align: center;">
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #ff5252;">Upper (+2σ Ceiling)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #eaecef;">₹{bb_d['upper']:,.1f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #848e9c;">Middle (20 SMA)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #64b5f6;">₹{bb_d['middle']:,.1f}</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #00e676;">Lower (-2σ Floor)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #eaecef;">₹{bb_d['lower']:,.1f}</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.85rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Option Seller Rule:</b><br>{bb_d['suggestion']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with v_c2:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid #64b5f6;">
+                <div class="strike-title">
+                    <span>2. Average True Range (ATR 14)</span>
+                    <span style="font-size: 0.8rem; color: #64b5f6; background: rgba(100,181,246,0.1); padding: 2px 8px; border-radius: 4px;">±{atr_d['value']:.1f} pts Daily Move</span>
+                </div>
+                <div style="font-size: 0.85rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {atr_d['simple_term']}
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; text-align: center;">
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #848e9c;">14-Day ATR Range</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #eaecef;">±{atr_d['value']:.1f} pts</div>
+                    </div>
+                    <div style="background: #1a1e29; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: #00e676;">Min Safe Strike Buffer (1.25x)</div>
+                        <div style="font-size: 1rem; font-weight: 700; color: #00e676;">{atr_d['safe_strike_buffer_pts']} pts</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.85rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Option Seller Rule:</b><br>{atr_d['suggestion']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+with tech_tab3:
+    m_c1, m_c2, m_c3 = st.columns(3)
+    with m_c1:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {adx_d['color']};">
+                <div class="strike-title">
+                    <span>1. ADX (14) Trend Strength</span>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: {adx_d['color']}; margin: 6px 0;">
+                    {adx_d['value']:.1f} <span style="font-size: 0.85rem; font-weight: 500;">({adx_d['badge']})</span>
+                </div>
+                <div style="font-size: 0.82rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {adx_d['simple_term']}
+                </div>
+                <div style="font-size: 0.83rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Seller Rule:</b><br>{adx_d['suggestion']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with m_c2:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {rsi_d['color']};">
+                <div class="strike-title">
+                    <span>2. RSI (14) Momentum</span>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: {rsi_d['color']}; margin: 6px 0;">
+                    {rsi_d['value']:.1f} <span style="font-size: 0.85rem; font-weight: 500;">({rsi_d['badge']})</span>
+                </div>
+                <div style="font-size: 0.82rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {rsi_d['simple_term']}
+                </div>
+                <div style="font-size: 0.83rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Seller Rule:</b><br>{rsi_d['suggestion']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with m_c3:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {ma_d['color']};">
+                <div class="strike-title">
+                    <span>3. Moving Averages (Trend)</span>
+                </div>
+                <div style="font-size: 1rem; font-weight: 700; color: {ma_d['color']}; margin: 6px 0;">
+                    {ma_d['badge']}
+                </div>
+                <div style="font-size: 0.8rem; color: #848e9c; margin-bottom: 6px;">
+                    20 EMA: <b>₹{ma_d['ema20']:,.0f}</b> | 50 EMA: <b>₹{ma_d['ema50']:,.0f}</b>
+                </div>
+                <div style="font-size: 0.82rem; color: #848e9c; margin-bottom: 8px;">
+                    <b>Simple Meaning:</b> {ma_d['simple_term']}
+                </div>
+                <div style="font-size: 0.83rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Seller Rule:</b><br>{ma_d['suggestion']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 st.markdown("---")
 
