@@ -127,12 +127,7 @@ st.markdown(
 )
 
 
-@st.cache_resource
-def get_data_manager():
-    return DataManager()
-
-
-data_manager = get_data_manager()
+data_manager = DataManager()
 analytics_engine = AnalyticsEngine()
 
 # --- SIDEBAR CONFIGURATION ---
@@ -185,8 +180,12 @@ with st.spinner("Fetching live constituent data & official NSE option chain...")
         data_manager.get_live_option_chains()
     )
 
-    # Fetch live GIFT NIFTY from NSE IX
-    gift_nifty = data_manager.get_gift_nifty()
+    # Fetch live GIFT NIFTY from NSE IX with fallback
+    gift_nifty = (
+        data_manager.get_gift_nifty()
+        if hasattr(data_manager, "get_gift_nifty")
+        else {}
+    )
     
     market = analytics_engine.process_market_data(
         df_raw,
