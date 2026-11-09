@@ -23,6 +23,8 @@ REPO_PATH = os.path.dirname(os.path.abspath(__file__))
 
 def push_repo(remote_url: str, token: str = ""):
     repo = Repo(REPO_PATH)
+    # Ensure refs/heads/main points to current HEAD
+    repo.refs[b"refs/heads/main"] = repo.head()
     
     # If token provided and URL is HTTPS, format with GitHub token authentication
     target_url = remote_url.strip()
