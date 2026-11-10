@@ -11,6 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 from data.manager import DataManager
 from core.engine import AnalyticsEngine
 from core.technicals import TechnicalAnalyzer
+from core.macro import MacroEventsProvider
 from utils.formatting import (
     format_inr,
     format_volume,
@@ -131,6 +132,7 @@ st.markdown(
 data_manager = DataManager()
 analytics_engine = AnalyticsEngine()
 tech_analyzer = TechnicalAnalyzer()
+macro_provider = MacroEventsProvider()
 
 # --- SIDEBAR CONFIGURATION ---
 st.sidebar.title("⚡ Option Radar Settings")
@@ -232,6 +234,9 @@ tech_data = tech_analyzer.get_technical_summary(
     day_low=n_meta.get("dayLow", None),
     day_open=n_meta.get("open", None),
 )
+
+# Global Macro & Market Events for Option Sellers
+macro_data = macro_provider.get_macro_dashboard()
 
 st.markdown(
     """
@@ -1051,6 +1056,199 @@ with tech_tab3:
                 </div>
                 <div style="font-size: 0.83rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid #2a2e39;">
                     <b>💡 Seller Rule:</b><br>{ma_d['suggestion']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+st.markdown("---")
+
+# --- SECTION: GLOBAL MACRO, GEOPOLITICS & MARKET EVENTS RADAR ---
+st.subheader("🌐 Global Macro, Geopolitics & Event Radar")
+st.caption(
+    "Option sellers don't get hurt by normal technical pullbacks; they get hurt by overnight gap-openings and sudden volatility spikes. "
+    "Track live macro catalysts, high-impact central bank events, and geopolitical developments that dictate gap risk."
+)
+
+m_rates = macro_data.get("rates", {})
+m_news = macro_data.get("news", [])
+m_cal = macro_data.get("calendar", [])
+m_fii = macro_data.get("fii_rules", {})
+
+# 5 Core Global Macro Ticker Cards
+r_c1, r_c2, r_c3, r_c4, r_c5 = st.columns(5)
+
+# 1. Brent Crude
+brent = m_rates.get("brent", {})
+with r_c1:
+    b_chg = brent.get("pChange", 0.0)
+    b_sign = "+" if b_chg >= 0 else ""
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {brent.get('color', '#848e9c')}; padding: 12px 14px;">
+            <div class="metric-label" style="display: flex; justify-content: space-between;">
+                <span>Brent Crude</span>
+                <span style="font-size: 0.7rem; color: #848e9c;">USD/bbl</span>
+            </div>
+            <div class="metric-val" style="font-size: 1.35rem;">${brent.get('price', 0.0):.2f}</div>
+            <div class="metric-sub" style="color: {brent.get('color', '#848e9c')};">{b_sign}{b_chg:.2f}%</div>
+            <div style="font-size: 0.72rem; color: #848e9c; margin-top: 4px;">{brent.get('status', '')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# 2. US Dollar Index (DXY)
+dxy = m_rates.get("dxy", {})
+with r_c2:
+    d_chg = dxy.get("pChange", 0.0)
+    d_sign = "+" if d_chg >= 0 else ""
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {dxy.get('color', '#848e9c')}; padding: 12px 14px;">
+            <div class="metric-label" style="display: flex; justify-content: space-between;">
+                <span>Dollar Index</span>
+                <span style="font-size: 0.7rem; color: #848e9c;">DXY</span>
+            </div>
+            <div class="metric-val" style="font-size: 1.35rem;">{dxy.get('price', 0.0):.2f}</div>
+            <div class="metric-sub" style="color: {dxy.get('color', '#848e9c')};">{d_sign}{d_chg:.2f}%</div>
+            <div style="font-size: 0.72rem; color: #848e9c; margin-top: 4px;">{dxy.get('status', '')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# 3. USD / INR
+usdinr = m_rates.get("usdinr", {})
+with r_c3:
+    u_chg = usdinr.get("pChange", 0.0)
+    u_sign = "+" if u_chg >= 0 else ""
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {usdinr.get('color', '#848e9c')}; padding: 12px 14px;">
+            <div class="metric-label" style="display: flex; justify-content: space-between;">
+                <span>USD / INR</span>
+                <span style="font-size: 0.7rem; color: #848e9c;">Rupee</span>
+            </div>
+            <div class="metric-val" style="font-size: 1.35rem;">₹{usdinr.get('price', 0.0):.2f}</div>
+            <div class="metric-sub" style="color: {usdinr.get('color', '#848e9c')};">{u_sign}{u_chg:.2f}%</div>
+            <div style="font-size: 0.72rem; color: #848e9c; margin-top: 4px;">{usdinr.get('status', '')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# 4. US 10-Yr Yield
+us10y = m_rates.get("us10y", {})
+with r_c4:
+    y_chg = us10y.get("pChange", 0.0)
+    y_sign = "+" if y_chg >= 0 else ""
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {us10y.get('color', '#848e9c')}; padding: 12px 14px;">
+            <div class="metric-label" style="display: flex; justify-content: space-between;">
+                <span>US 10Y Yield</span>
+                <span style="font-size: 0.7rem; color: #848e9c;">Treasury</span>
+            </div>
+            <div class="metric-val" style="font-size: 1.35rem;">{us10y.get('price', 0.0):.2f}%</div>
+            <div class="metric-sub" style="color: {us10y.get('color', '#848e9c')};">{y_sign}{y_chg:.2f}%</div>
+            <div style="font-size: 0.72rem; color: #848e9c; margin-top: 4px;">{us10y.get('status', '')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# 5. India VIX
+vix = m_rates.get("vix", {})
+with r_c5:
+    v_chg = vix.get("pChange", 0.0)
+    v_sign = "+" if v_chg >= 0 else ""
+    st.markdown(
+        f"""
+        <div class="metric-container" style="border-top: 3px solid {vix.get('color', '#848e9c')}; padding: 12px 14px;">
+            <div class="metric-label" style="display: flex; justify-content: space-between;">
+                <span>India VIX</span>
+                <span style="font-size: 0.7rem; color: #848e9c;">Volatility</span>
+            </div>
+            <div class="metric-val" style="font-size: 1.35rem;">{vix.get('price', 0.0):.2f}</div>
+            <div class="metric-sub" style="color: {vix.get('color', '#848e9c')};">{v_sign}{v_chg:.2f}%</div>
+            <div style="font-size: 0.72rem; color: #848e9c; margin-top: 4px;">{vix.get('status', '')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+macro_tab1, macro_tab2, macro_tab3 = st.tabs([
+    "📅 High-Impact Event & Central Bank Calendar",
+    "📰 Live Market & Geopolitical Headlines",
+    "🏦 FII / DII Derivatives Positioning Guide",
+])
+
+with macro_tab1:
+    st.markdown("**Major Macro & Central Bank Events Dictating Overnight Gap Risk**")
+    for ev in m_cal:
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {ev['impact_color']}; padding: 14px 18px; margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-size: 1.05rem; font-weight: 700; color: #eaecef;">{ev['event']}</span>
+                    <span style="font-size: 0.78rem; font-weight: 700; color: {ev['impact_color']}; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px;">{ev['impact']} IMPACT</span>
+                </div>
+                <div style="font-size: 0.82rem; color: #848e9c; margin-bottom: 6px;">
+                    <b>Schedule:</b> {ev['frequency']} | <b>Affected Sectors:</b> {ev['affected_sectors']}
+                </div>
+                <div style="font-size: 0.85rem; color: #cfd8dc; margin-bottom: 8px;">
+                    <b>Catalyst Focus:</b> {ev['key_focus']}
+                </div>
+                <div style="font-size: 0.84rem; color: #eaecef; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 6px; border: 1px solid #2a2e39;">
+                    <b>💡 Option Seller Playbook:</b><br>{ev['seller_rule']}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+with macro_tab2:
+    st.markdown("**Real-Time Market, Energy & Geopolitical Headlines**")
+    if m_news:
+        n_col1, n_col2 = st.columns(2)
+        for idx, item in enumerate(m_news):
+            target_col = n_col1 if idx % 2 == 0 else n_col2
+            with target_col:
+                st.markdown(
+                    f"""
+                    <div class="strike-card" style="padding: 12px 16px; margin-bottom: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <span style="font-size: 0.75rem; color: {item['tag_color']}; font-weight: 600; background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius: 4px;">{item['tag']}</span>
+                            <span style="font-size: 0.72rem; color: #848e9c;">{item['publisher']}</span>
+                        </div>
+                        <div style="font-size: 0.88rem; font-weight: 600; color: #eaecef; line-height: 1.4; margin-bottom: 6px;">
+                            {item['title']}
+                        </div>
+                        <div style="text-align: right;">
+                            <a href="{item['link']}" target="_blank" style="color: #64b5f6; font-size: 0.75rem; text-decoration: none; font-weight: 600;">Read Full Story ↗</a>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.info("No active market headlines reported at this time.")
+
+with macro_tab3:
+    st.markdown("**FII Index Futures Long/Short Positioning Framework**")
+    st.caption("FII positioning in index futures provides a 3-5 day leading indicator of liquidity momentum and potential short-squeeze traps.")
+    for r in m_fii.get("ranges", []):
+        st.markdown(
+            f"""
+            <div class="strike-card" style="border-left: 4px solid {r['color']}; padding: 12px 16px; margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-size: 0.95rem; font-weight: 700; color: #eaecef;">{r['range']}</span>
+                    <span style="font-size: 0.8rem; font-weight: 700; color: {r['color']};">{r['state']}</span>
+                </div>
+                <div style="font-size: 0.85rem; color: #cfd8dc;">
+                    {r['rule']}
                 </div>
             </div>
             """,
