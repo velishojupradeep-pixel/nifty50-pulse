@@ -12,7 +12,7 @@ class InstitutionalAdvisor:
 
     # NSE Freeze Limit for NIFTY Index Options is typically 1,800 units (~36-72 lots depending on lot size)
     FREEZE_LIMIT_UNITS = 1800
-    LOT_SIZE = 25  # Standard NIFTY lot size
+    LOT_SIZE = 65  # Standard NIFTY lot size
 
     @classmethod
     def get_max_lots_per_order(cls) -> int:

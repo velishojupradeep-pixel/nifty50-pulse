@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional, Tuple
 POSITIONS_FILE = os.path.expanduser(
     "~/.gemini/antigravity/scratch/nifty50-pulse/.active_positions.json"
 )
-NIFTY_LOT_SIZE = 75
+NIFTY_LOT_SIZE = 65
 
 
 def _norm_cdf(x: float) -> float:
@@ -172,7 +172,8 @@ class PositionManager:
             side = leg["side"]
             otype = leg["type"]
             strike = int(leg["strike"])
-            qty = int(leg.get("qty", leg.get("lots", 1) * NIFTY_LOT_SIZE))
+            lots = int(leg.get("lots", 1))
+            qty = lots * NIFTY_LOT_SIZE
             entry = float(leg["entry_price"])
             expiry = leg.get("expiry", curr_chain.get("expiry", ""))
 

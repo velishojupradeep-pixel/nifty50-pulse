@@ -631,7 +631,7 @@ with st.form("add_position_form", clear_on_submit=False):
     with f_c4:
         pos_strike = st.selectbox("Strike", strike_choices, index=default_ce_idx, key="pos_strike")
     with f_c5:
-        pos_lots = st.number_input("Lots (75/lot)", min_value=1, max_value=500, value=1, step=1, key="pos_lots")
+        pos_lots = st.number_input("Lots (65/lot)", min_value=1, max_value=500, value=1, step=1, key="pos_lots")
     with f_c6:
         pos_entry = st.number_input(
             "Entry Price ₹ (0 = Live LTP)", min_value=0.0, max_value=5000.0, value=0.0, step=0.5, key="pos_entry"
