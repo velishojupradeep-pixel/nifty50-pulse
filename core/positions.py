@@ -71,6 +71,7 @@ class PositionManager:
         expiry: str,
         lots: int,
         entry_price: float,
+        exit_price: float = 0.0,
     ) -> List[Dict[str, Any]]:
         new_leg = {
             "id": str(uuid.uuid4())[:8],
@@ -81,6 +82,7 @@ class PositionManager:
             "lots": int(lots),
             "qty": int(lots) * NIFTY_LOT_SIZE,
             "entry_price": round(float(entry_price), 2),
+            "exit_price": round(float(exit_price), 2),
         }
         updated = list(positions) + [new_leg]
         self.save_positions(updated)
@@ -96,6 +98,7 @@ class PositionManager:
         expiry: str,
         lots: int,
         entry_price: float,
+        exit_price: float = 0.0,
     ) -> List[Dict[str, Any]]:
         updated = []
         for p in positions:
@@ -109,6 +112,7 @@ class PositionManager:
                     "lots": int(lots),
                     "qty": int(lots) * NIFTY_LOT_SIZE,
                     "entry_price": round(float(entry_price), 2),
+                    "exit_price": round(float(exit_price), 2),
                 })
             else:
                 updated.append(p)
@@ -143,6 +147,10 @@ class PositionManager:
             return {
                 "enriched_legs": [],
                 "total_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "open_mtm_pnl": 0.0,
+                "open_count": 0,
+                "closed_count": 0,
                 "net_delta": 0.0,
                 "structure": "No Active Positions",
                 "risk_profile": "Neutral",
@@ -161,6 +169,10 @@ class PositionManager:
 
         enriched_legs = []
         total_pnl = 0.0
+        realized_pnl = 0.0
+        open_mtm_pnl = 0.0
+        open_count = 0
+        closed_count = 0
         net_delta = 0.0
 
         short_ces = []
@@ -175,6 +187,8 @@ class PositionManager:
             lots = int(leg.get("lots", 1))
             qty = lots * NIFTY_LOT_SIZE
             entry = float(leg["entry_price"])
+            exit_p = float(leg.get("exit_price", 0.0) or 0.0)
+            is_closed = exit_p > 0.0
             expiry = leg.get("expiry", curr_chain.get("expiry", ""))
 
             chain = chains_by_exp.get(expiry) or curr_chain or {}
@@ -199,14 +213,22 @@ class PositionManager:
                 )
                 live_ltp = round(intrinsic if intrinsic > 0 else entry, 2)
 
+            mark_price = exit_p if is_closed else live_ltp
+
             if side == "SELL":
-                pts_pnl = entry - live_ltp
+                pts_pnl = entry - mark_price
                 pnl = pts_pnl * qty
             else:
-                pts_pnl = live_ltp - entry
+                pts_pnl = mark_price - entry
                 pnl = pts_pnl * qty
 
             total_pnl += pnl
+            if is_closed:
+                realized_pnl += pnl
+                closed_count += 1
+            else:
+                open_mtm_pnl += pnl
+                open_count += 1
 
             # Distance from spot (positive = OTM for option seller)
             if otype == "CE":
@@ -215,29 +237,36 @@ class PositionManager:
                 dist_pts = spot - strike
             dist_pct = (dist_pts / spot * 100.0) if spot > 0 else 0.0
 
-            unit_delta = estimate_option_delta(spot, strike, otype, iv, dte_curr)
-            signed_delta = (-unit_delta if side == "SELL" else unit_delta) * (
-                qty / NIFTY_LOT_SIZE
-            )
-            net_delta += signed_delta
-
-            # Risk status badge
-            if side == "BUY":
-                status = "Hedge / Long"
-                status_color = "#64b5f6"
-            elif dist_pts < 0:
-                status = "ITM Danger"
-                status_color = "#ff5252"
-            elif dist_pts <= 120:
-                status = "Tested (Near Spot)"
-                status_color = "#ffb300"
+            if is_closed:
+                signed_delta = 0.0
+                status = "CLOSED"
+                status_color = "#848e9c"
             else:
-                status = "Safe OTM"
-                status_color = "#00c853"
+                unit_delta = estimate_option_delta(spot, strike, otype, iv, dte_curr)
+                signed_delta = (-unit_delta if side == "SELL" else unit_delta) * (
+                    qty / NIFTY_LOT_SIZE
+                )
+                net_delta += signed_delta
+
+                # Risk status badge
+                if side == "BUY":
+                    status = "Hedge / Long"
+                    status_color = "#64b5f6"
+                elif dist_pts < 0:
+                    status = "ITM Danger"
+                    status_color = "#ff5252"
+                elif dist_pts <= 120:
+                    status = "Tested (Near Spot)"
+                    status_color = "#ffb300"
+                else:
+                    status = "Safe OTM"
+                    status_color = "#00c853"
 
             enriched = {
                 **leg,
                 "qty": qty,
+                "exit_price": round(exit_p, 2),
+                "is_closed": is_closed,
                 "live_ltp": round(live_ltp, 2),
                 "iv": round(iv, 1),
                 "oi": oi,
@@ -251,14 +280,15 @@ class PositionManager:
             }
             enriched_legs.append(enriched)
 
-            if side == "SELL" and otype == "CE":
-                short_ces.append(enriched)
-            elif side == "BUY" and otype == "CE":
-                buy_ces.append(enriched)
-            elif side == "SELL" and otype == "PE":
-                short_pes.append(enriched)
-            elif side == "BUY" and otype == "PE":
-                buy_pes.append(enriched)
+            if not is_closed:
+                if side == "SELL" and otype == "CE":
+                    short_ces.append(enriched)
+                elif side == "BUY" and otype == "CE":
+                    buy_ces.append(enriched)
+                elif side == "SELL" and otype == "PE":
+                    short_pes.append(enriched)
+                elif side == "BUY" and otype == "PE":
+                    buy_pes.append(enriched)
 
         # Determine structure & hedge completeness
         short_ce_qty = sum(l["qty"] for l in short_ces)
@@ -270,7 +300,10 @@ class PositionManager:
         unhedged_pe = max(0, short_pe_qty - buy_pe_qty)
         is_hedged = (unhedged_ce == 0) and (unhedged_pe == 0)
 
-        if short_ces and short_pes and buy_ces and buy_pes:
+        if open_count == 0 and closed_count > 0:
+            structure = "All Positions Closed Today"
+            risk_profile = "Flat (No Open Risk)"
+        elif short_ces and short_pes and buy_ces and buy_pes:
             structure = "Iron Condor / Iron Fly (Hedged)"
         elif short_ces and short_pes:
             structure = "Short Strangle / Straddle (Naked)"
@@ -285,34 +318,49 @@ class PositionManager:
         else:
             structure = "Custom / Directional Option Book"
 
-        risk_profile = (
-            "Defined / Capped Risk"
-            if is_hedged
-            else "Unlimited Tail Risk (Unhedged Short)"
-        )
+        if open_count > 0:
+            risk_profile = (
+                "Defined / Capped Risk"
+                if is_hedged
+                else "Unlimited Tail Risk (Unhedged Short)"
+            )
 
         # Compute expiry payoff curve across spot -600 to +600
         payoff_curve = self._compute_payoff_curve(enriched_legs, spot)
         breakevens = self._find_breakevens(payoff_curve)
 
         # Generate Risk Minimization & Profit Maximization Strategies
-        suggestions = self._generate_strategy_suggestions(
-            enriched_legs=enriched_legs,
-            short_ces=short_ces,
-            buy_ces=buy_ces,
-            short_pes=short_pes,
-            buy_pes=buy_pes,
-            unhedged_ce=unhedged_ce,
-            unhedged_pe=unhedged_pe,
-            net_delta=net_delta,
-            spot=spot,
-            curr_chain=curr_chain,
-            tech_data=tech_data,
-        )
+        if open_count == 0 and closed_count > 0:
+            suggestions = [{
+                "category": "TODAY'S P&L SUMMARY",
+                "priority": "DONE",
+                "color": "#00e676" if realized_pnl >= 0 else "#ff5252",
+                "title": f"All {closed_count} Leg(s) Closed Today — Net Realized P&L: {'+' if realized_pnl >= 0 else ''}₹{realized_pnl:,.0f}",
+                "action": "Zero open intraday or overnight risk remaining.",
+                "why": "Capital is free for your next high-probability setup.",
+            }]
+        else:
+            suggestions = self._generate_strategy_suggestions(
+                enriched_legs=enriched_legs,
+                short_ces=short_ces,
+                buy_ces=buy_ces,
+                short_pes=short_pes,
+                buy_pes=buy_pes,
+                unhedged_ce=unhedged_ce,
+                unhedged_pe=unhedged_pe,
+                net_delta=net_delta,
+                spot=spot,
+                curr_chain=curr_chain,
+                tech_data=tech_data,
+            )
 
         return {
             "enriched_legs": enriched_legs,
             "total_pnl": round(total_pnl, 2),
+            "realized_pnl": round(realized_pnl, 2),
+            "open_mtm_pnl": round(open_mtm_pnl, 2),
+            "open_count": open_count,
+            "closed_count": closed_count,
             "net_delta": round(net_delta, 2),
             "structure": structure,
             "risk_profile": risk_profile,
@@ -333,6 +381,9 @@ class PositionManager:
         for s in spot_grid:
             total = 0.0
             for l in legs:
+                if l.get("is_closed"):
+                    total += l["pnl"]
+                    continue
                 k = l["strike"]
                 entry = l["entry_price"]
                 qty = l["qty"]
