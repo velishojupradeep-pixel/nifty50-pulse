@@ -8,6 +8,7 @@ Includes resilient disk persistence so real market prices are NEVER replaced by 
 import os
 import json
 import time
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from curl_cffi import requests
 
@@ -75,6 +76,31 @@ class NSEOptionChainProvider:
             except Exception:
                 pass
 
+    @staticmethod
+    def filter_active_expiries(expiries: List[str]) -> List[str]:
+        """Filters out any expiry dates in the past based on today's calendar date."""
+        today = datetime.now().date()
+        valid = []
+        for exp in expiries:
+            try:
+                exp_clean = exp.strip()
+                dt = datetime.strptime(exp_clean, "%d-%b-%Y").date()
+                if dt >= today:
+                    valid.append(exp_clean)
+            except Exception:
+                pass
+        return valid
+
+    @staticmethod
+    def generate_fallback_expiries() -> List[str]:
+        """Dynamically computes the next 4 upcoming Tuesday expiries if network fails."""
+        today = datetime.now().date()
+        days_ahead = (1 - today.weekday()) % 7
+        if days_ahead == 0 and datetime.now().hour >= 16:
+            days_ahead = 7
+        next_tuesday = today + timedelta(days=days_ahead)
+        return [(next_tuesday + timedelta(weeks=i)).strftime("%d-%b-%Y") for i in range(4)]
+
     def get_official_expiries(self) -> List[str]:
         """Fetches the official list of live expiry dates directly from NSE India."""
         self._ensure_session()
@@ -82,16 +108,22 @@ class NSEOptionChainProvider:
             resp = self.session.get(self.CONTRACT_INFO_URL, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
-                expiries = data.get("expiryDates", [])
-                if expiries:
-                    self.disk_cache["expiries"] = expiries
+                raw_expiries = data.get("expiryDates", [])
+                active_expiries = self.filter_active_expiries(raw_expiries)
+                if active_expiries:
+                    self.disk_cache["expiries"] = active_expiries
                     self._save_disk_cache()
-                    return expiries
+                    return active_expiries
         except Exception:
             pass
 
-        # Return disk cached official expiries if network hiccup
-        return self.disk_cache.get("expiries", ["09-Nov-2026", "17-Nov-2026", "23-Nov-2026", "01-Dec-2026"])
+        # Return disk cached official expiries strictly filtered for active non-expired dates
+        cached = self.filter_active_expiries(self.disk_cache.get("expiries", []))
+        if cached:
+            return cached
+
+        # Dynamic calendar fallback
+        return self.generate_fallback_expiries()
 
     def fetch_live_option_chain(self, expiry: str) -> Dict[str, Any]:
         """
@@ -185,11 +217,14 @@ class NSEOptionChainProvider:
         # If live fetch timed out or blocked by cloud hosting IP, return last saved authentic NSE snapshot or seed
         cached_chain = self.disk_cache.get(f"chain_{expiry}")
         if not cached_chain:
-            # Check any available chain in cache/seed
+            # Check any available non-expired chain in cache/seed
+            active_list = self.get_official_expiries()
             for k, v in self.disk_cache.items():
                 if k.startswith("chain_") and isinstance(v, dict) and "strikes_map" in v:
-                    cached_chain = v
-                    break
+                    c_exp = v.get("expiry", "")
+                    if c_exp in active_list:
+                        cached_chain = v
+                        break
 
         if cached_chain:
             # Restore integer keys

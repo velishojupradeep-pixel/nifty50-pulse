@@ -23,11 +23,12 @@ class StrikeAdvisor:
         return int(round(price / step) * step)
 
     def calculate_dte(self, expiry_str: str) -> int:
-        """Computes days to expiry from NSE date string format (e.g. '09-Nov-2026')."""
+        """Computes days to expiry from NSE date string format (e.g. '17-Nov-2026')."""
         try:
-            exp_date = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+            exp_date = datetime.strptime(expiry_str.strip(), "%d-%b-%Y").date()
             today = datetime.now().date()
-            return max(1, (exp_date - today).days)
+            diff = (exp_date - today).days
+            return max(0, diff)
         except Exception:
             return 4
 
@@ -49,16 +50,30 @@ class StrikeAdvisor:
         next_chain = next_chain or {}
         expiries = official_expiries or []
 
+        # Filter out any expired dates
+        today = datetime.now().date()
+        valid_expiries = []
+        for e in expiries:
+            try:
+                if datetime.strptime(e.strip(), "%d-%b-%Y").date() >= today:
+                    valid_expiries.append(e.strip())
+            except Exception:
+                pass
+
+        # Official Expiry Dates directly from NSE
+        if valid_expiries:
+            curr_expiry_date = valid_expiries[0]
+            next_expiry_date = valid_expiries[1] if len(valid_expiries) >= 2 else valid_expiries[0]
+        else:
+            curr_expiry_date = curr_chain.get("expiry") or "17-Nov-2026"
+            next_expiry_date = next_chain.get("expiry") or "23-Nov-2026"
+
         # Prefer live underlying from NSE Option Chain if available
         spot = curr_chain.get("underlying") or nifty_meta.get("lastPrice", 24600.0)
         atm_strike = curr_chain.get("atm_strike") or self.round_strike(spot, 50)
         regime_status = regime.get("status", "RANGEBOUND / TUG-OF-WAR")
         regime_score = regime.get("score", 0.0)
         iv = custom_iv or self.default_iv
-
-        # Official Expiry Dates directly from NSE
-        curr_expiry_date = expiries[0] if len(expiries) >= 1 else curr_chain.get("expiry", "09-Nov-2026")
-        next_expiry_date = expiries[1] if len(expiries) >= 2 else next_chain.get("expiry", "17-Nov-2026")
 
         dte_curr = self.calculate_dte(curr_expiry_date)
         dte_next = self.calculate_dte(next_expiry_date)
