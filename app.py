@@ -6,12 +6,14 @@ Streamlit Application tailored for Active Option Sellers.
 import time
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
 from data.manager import DataManager
 from core.engine import AnalyticsEngine
 from core.technicals import TechnicalAnalyzer
 from core.macro import MacroEventsProvider
+from core.positions import PositionManager, NIFTY_LOT_SIZE
 from utils.formatting import (
     format_inr,
     format_volume,
@@ -599,6 +601,236 @@ with st.expander("📊 View Live NSE Option Chain Table (Direct from nseindia.co
             hide_index=True,
             use_container_width=True,
         )
+
+st.markdown("---")
+
+# --- SECTION: MY ACTIVE POSITIONS & RISK/PROFIT STRATEGY ADVISOR ---
+pos_manager = PositionManager()
+if "active_positions" not in st.session_state:
+    st.session_state["active_positions"] = pos_manager.load_positions()
+
+st.subheader("💼 My Active Positions & Risk / Profit Adjustment Advisor")
+st.caption(
+    "Enter your open NIFTY option legs below. Positions are marked to market against the live NSE Option Chain "
+    "to calculate real-time P&L, payoff, and tailored strategies to minimize tail risk and boost profit."
+)
+
+avail_expiries = official_expiries[:4] if official_expiries else [curr_chain.get("expiry", "17-Nov-2026")]
+atm_default = int(round(ltp / 50.0) * 50) if ltp > 0 else 25200
+strike_choices = list(range(atm_default - 1200, atm_default + 1250, 50))
+default_ce_idx = strike_choices.index(atm_default + 200) if (atm_default + 200) in strike_choices else len(strike_choices) // 2
+
+with st.form("add_position_form", clear_on_submit=False):
+    f_c1, f_c2, f_c3, f_c4, f_c5, f_c6, f_c7 = st.columns([1.0, 0.9, 1.4, 1.1, 0.9, 1.3, 1.1])
+    with f_c1:
+        pos_side = st.selectbox("Side", ["SELL", "BUY"], key="pos_side")
+    with f_c2:
+        pos_type = st.selectbox("Type", ["CE", "PE"], key="pos_type")
+    with f_c3:
+        pos_expiry = st.selectbox("Expiry", avail_expiries, key="pos_expiry")
+    with f_c4:
+        pos_strike = st.selectbox("Strike", strike_choices, index=default_ce_idx, key="pos_strike")
+    with f_c5:
+        pos_lots = st.number_input("Lots (75/lot)", min_value=1, max_value=500, value=1, step=1, key="pos_lots")
+    with f_c6:
+        pos_entry = st.number_input(
+            "Entry Price ₹ (0 = Live LTP)", min_value=0.0, max_value=5000.0, value=0.0, step=0.5, key="pos_entry"
+        )
+    with f_c7:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        submitted_pos = st.form_submit_button("➕ Add Position", use_container_width=True)
+
+    if submitted_pos:
+        resolved_entry = float(pos_entry)
+        if resolved_entry <= 0.0:
+            target_chain = next_chain if (next_chain and pos_expiry == next_chain.get("expiry")) else curr_chain
+            s_row = (target_chain or {}).get("strikes_map", {}).get(int(pos_strike), {})
+            resolved_entry = float(s_row.get("ce_ltp" if pos_type == "CE" else "pe_ltp", 0.0))
+            if resolved_entry <= 0.0:
+                resolved_entry = 50.0
+        st.session_state["active_positions"] = pos_manager.add_position(
+            st.session_state["active_positions"],
+            side=pos_side,
+            opt_type=pos_type,
+            strike=int(pos_strike),
+            expiry=pos_expiry,
+            lots=int(pos_lots),
+            entry_price=resolved_entry,
+        )
+        st.rerun()
+
+active_pos_list = st.session_state["active_positions"]
+
+if active_pos_list:
+    eval_res = pos_manager.evaluate_portfolio(
+        positions=active_pos_list,
+        spot=ltp,
+        curr_chain=curr_chain,
+        next_chain=next_chain,
+        tech_data=tech_data,
+        dte_curr=advisor.get("curr", {}).get("dte", 4),
+    )
+
+    # Portfolio KPI Strip
+    pk1, pk2, pk3, pk4 = st.columns(4)
+    mtm_val = eval_res["total_pnl"]
+    mtm_color = "#00e676" if mtm_val >= 0 else "#ff5252"
+    mtm_sign = "+" if mtm_val >= 0 else ""
+
+    with pk1:
+        st.markdown(
+            f"""
+            <div class="metric-container" style="border-top: 3px solid {mtm_color}; padding: 12px 14px;">
+                <div class="metric-label">Live Portfolio MTM P&L</div>
+                <div class="metric-val" style="font-size: 1.45rem; color: {mtm_color};">{mtm_sign}₹{mtm_val:,.0f}</div>
+                <div style="font-size: 0.74rem; color: #848e9c;">{len(eval_res['enriched_legs'])} Active Leg(s)</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with pk2:
+        st.markdown(
+            f"""
+            <div class="metric-container" style="border-top: 3px solid #64b5f6; padding: 12px 14px;">
+                <div class="metric-label">Detected Strategy</div>
+                <div class="metric-val" style="font-size: 1.05rem; color: #eaecef;">{eval_res['structure']}</div>
+                <div style="font-size: 0.74rem; color: #848e9c;">Breakevens: {', '.join(str(b) for b in eval_res['breakevens']) if eval_res['breakevens'] else 'N/A'}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with pk3:
+        nd = eval_res["net_delta"]
+        nd_color = "#00c853" if abs(nd) < 0.25 else ("#64b5f6" if nd > 0 else "#ff9800")
+        nd_bias = "Delta-Neutral" if abs(nd) < 0.25 else ("Net Bullish" if nd > 0 else "Net Bearish")
+        st.markdown(
+            f"""
+            <div class="metric-container" style="border-top: 3px solid {nd_color}; padding: 12px 14px;">
+                <div class="metric-label">Net Portfolio Delta</div>
+                <div class="metric-val" style="font-size: 1.45rem; color: {nd_color};">{nd:+.2f}</div>
+                <div style="font-size: 0.74rem; color: #848e9c;">{nd_bias}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with pk4:
+        rp_color = "#00c853" if eval_res["is_hedged"] else "#ff5252"
+        max_p = eval_res.get("max_profit", 0.0)
+        st.markdown(
+            f"""
+            <div class="metric-container" style="border-top: 3px solid {rp_color}; padding: 12px 14px;">
+                <div class="metric-label">Risk Profile</div>
+                <div class="metric-val" style="font-size: 1.0rem; color: {rp_color};">{eval_res['risk_profile']}</div>
+                <div style="font-size: 0.74rem; color: #848e9c;">Max Expiry Profit: ₹{max_p:,.0f}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+
+    # Active Legs Table + Remove Controls
+    hdr_col1, hdr_col2 = st.columns([5, 1])
+    with hdr_col1:
+        st.markdown("**📋 Open Option Legs (Live NSE Mark-to-Market)**")
+    with hdr_col2:
+        if st.button("🗑️ Clear All", key="clear_all_positions", use_container_width=True):
+            st.session_state["active_positions"] = pos_manager.clear_positions()
+            st.rerun()
+
+    for leg in eval_res["enriched_legs"]:
+        l_col1, l_col2 = st.columns([11, 1])
+        side_color = "#ff5252" if leg["side"] == "SELL" else "#64b5f6"
+        pnl_color = "#00e676" if leg["pnl"] >= 0 else "#ff5252"
+        pnl_sign = "+" if leg["pnl"] >= 0 else ""
+        with l_col1:
+            st.markdown(
+                f"""
+                <div class="strike-card" style="padding: 10px 14px; margin-bottom: 6px; border-left: 4px solid {side_color};">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                        <div>
+                            <span style="font-weight: 800; color: {side_color}; font-size: 0.86rem;">{leg['side']}</span>
+                            <span style="font-weight: 800; color: #eaecef; font-size: 0.96rem; margin-left: 6px;">NIFTY {leg['strike']} {leg['type']}</span>
+                            <span style="font-size: 0.78rem; color: #848e9c; margin-left: 8px;">{leg['expiry']} • {leg['lots']} lot(s) ({leg['qty']} qty)</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+                            <span style="font-size: 0.82rem; color: #cfd8dc;">Entry: <b>₹{leg['entry_price']:.2f}</b> → Live: <b>₹{leg['live_ltp']:.2f}</b></span>
+                            <span style="font-size: 0.82rem; color: #848e9c;">Dist: <b>{leg['dist_pts']:+.0f} pts</b> ({leg['dist_pct']:+.2f}%)</span>
+                            <span style="font-size: 0.9rem; font-weight: 800; color: {pnl_color};">{pnl_sign}₹{leg['pnl']:,.0f} ({leg['pts_pnl']:+.2f} pts)</span>
+                            <span style="font-size: 0.72rem; font-weight: 700; color: {leg['status_color']}; background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 4px;">{leg['status']}</span>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with l_col2:
+            if st.button("✖", key=f"del_leg_{leg['id']}", help="Remove leg"):
+                st.session_state["active_positions"] = pos_manager.remove_position(
+                    st.session_state["active_positions"], leg["id"]
+                )
+                st.rerun()
+
+    # Strategy Suggestions + Expiry Payoff Curve
+    strat_col, payoff_col = st.columns([1.25, 1.0])
+    with strat_col:
+        st.markdown("**🛡️ Suggested Strategy to Minimize Risk & Increase Profit**")
+        for sug in eval_res["suggestions"]:
+            st.markdown(
+                f"""
+                <div class="strike-card" style="padding: 12px 15px; margin-bottom: 8px; border-left: 4px solid {sug['color']};">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <span style="font-size: 0.72rem; font-weight: 700; color: {sug['color']};">{sug['category']} • {sug['priority']}</span>
+                    </div>
+                    <div style="font-size: 0.92rem; font-weight: 700; color: #eaecef; margin-bottom: 4px;">{sug['title']}</div>
+                    <div style="font-size: 0.83rem; color: #cfd8dc; line-height: 1.45; margin-bottom: 4px;">{sug['action']}</div>
+                    <div style="font-size: 0.76rem; color: #848e9c;"><i>Why: {sug['why']}</i></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    with payoff_col:
+        st.markdown("**📈 Expiry Payoff Curve**")
+        pc = eval_res.get("payoff_curve")
+        if pc and pc["spots"]:
+            fig_payoff = go.Figure()
+            fig_payoff.add_trace(
+                go.Scatter(
+                    x=pc["spots"],
+                    y=pc["pnls"],
+                    mode="lines",
+                    name="Expiry P&L",
+                    line=dict(color="#64b5f6", width=2.5),
+                    fill="tozeroy",
+                    fillcolor="rgba(100, 181, 246, 0.12)",
+                )
+            )
+            fig_payoff.add_hline(y=0, line_dash="dash", line_color="#848e9c", line_width=1)
+            if ltp > 0:
+                fig_payoff.add_vline(
+                    x=ltp,
+                    line_dash="dot",
+                    line_color="#ffb300",
+                    annotation_text=f"Spot {ltp:,.0f}",
+                    annotation_position="top right",
+                )
+            fig_payoff.update_layout(
+                template="plotly_dark",
+                height=320,
+                margin=dict(l=10, r=10, t=25, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(255,255,255,0.02)",
+                xaxis_title="NIFTY Expiry Spot",
+                yaxis_title="P&L (₹)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_payoff, use_container_width=True)
+else:
+    st.info(
+        "No active positions entered yet. Use the form above to add your open NIFTY option legs "
+        "(e.g., SELL 25450 CE / SELL 24850 PE) to see live MTM P&L, expiry payoff, and tailored risk/profit adjustments."
+    )
 
 st.markdown("---")
 
