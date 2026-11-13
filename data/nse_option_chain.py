@@ -227,10 +227,11 @@ class NSEOptionChainProvider:
                         break
 
         if cached_chain:
-            # Restore integer keys
+            # Restore integer keys and mark explicitly as cached fallback (not live-fetched)
             s_map = {int(k): v for k, v in cached_chain.get("strikes_map", {}).items()}
             return {
                 **cached_chain,
+                "is_live_nse": False,
                 "strikes_map": s_map,
             }
 
