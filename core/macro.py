@@ -5,11 +5,14 @@ high-impact economic catalysts, and live geopolitical/market headlines.
 """
 
 import os
+import re
 import json
 import time
 from typing import Dict, Any, List, Optional
 import pandas as pd
+import requests
 import yfinance as yf
+from bs4 import BeautifulSoup
 
 CACHE_FILE = os.path.expanduser("~/.gemini/antigravity/scratch/nifty50-pulse/.macro_cache.json")
 
@@ -17,33 +20,49 @@ CACHE_FILE = os.path.expanduser("~/.gemini/antigravity/scratch/nifty50-pulse/.ma
 class MacroEventsProvider:
     """Provides real-time global macro catalysts, event calendar, and market news for option sellers."""
 
-    def __init__(self, cache_ttl: int = 300):
+    def __init__(self, cache_ttl: int = 180):
         self.cache_ttl = cache_ttl
         self._cached_summary: Optional[Dict[str, Any]] = None
         self._last_fetch_time: float = 0
 
     def get_macro_dashboard(self) -> Dict[str, Any]:
         """
-        Returns live macro indicators, event calendar, and geopolitical news headlines.
+        Returns live macro indicators, Google Finance global summary,
+        upcoming earnings, event calendar, and geopolitical news headlines.
         """
         now = time.time()
         if self._cached_summary and (now - self._last_fetch_time < self.cache_ttl):
             return self._cached_summary
 
-        # 1. Fetch live macro market rates
-        rates = self._fetch_live_rates()
+        # 1. Fetch live Google Finance data (global markets, FX, news, upcoming earnings)
+        gf_data = self._fetch_google_finance_data()
 
-        # 2. Fetch live news headlines
-        news = self._fetch_live_news()
+        # 2. Fetch live macro market rates (enriched with Google Finance USD/INR if available)
+        rates = self._fetch_live_rates(gf_usdinr=gf_data.get("usdinr"))
 
-        # 3. Get high-impact economic calendar
+        # 3. Use Google Finance news first, fallback to yfinance/curated news
+        news = gf_data.get("news") or self._fetch_live_news()
+
+        # 4. Get high-impact economic calendar
         calendar = self._get_high_impact_calendar()
 
-        # 4. FII / DII Institutional derivatives positioning rules
+        # 5. FII / DII Institutional derivatives positioning rules
         fii_rules = self._get_fii_positioning_guide()
+
+        # 6. Build concise Google Finance Macro & Geopolitical Summary
+        gf_summary = self._build_google_finance_summary(
+            rates=rates,
+            global_markets=gf_data.get("global_markets", []),
+            news=news,
+            upcoming_earnings=gf_data.get("upcoming_earnings", []),
+        )
 
         dashboard = {
             "rates": rates,
+            "global_markets": gf_data.get("global_markets", []),
+            "upcoming_earnings": gf_data.get("upcoming_earnings", []),
+            "gf_summary": gf_summary,
+            "gf_live": gf_data.get("is_live", False),
             "news": news,
             "calendar": calendar,
             "fii_rules": fii_rules,
@@ -55,7 +74,252 @@ class MacroEventsProvider:
         self._save_cache(dashboard)
         return dashboard
 
-    def _fetch_live_rates(self) -> Dict[str, Any]:
+    def _fetch_google_finance_data(self) -> Dict[str, Any]:
+        """Scrapes live global indices, USD/INR, news headlines, and upcoming earnings from Google Finance."""
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        result: Dict[str, Any] = {
+            "is_live": False,
+            "global_markets": [],
+            "usdinr": None,
+            "news": [],
+            "upcoming_earnings": [],
+        }
+
+        target_quotes = {
+            ".INX:INDEXSP": "S&P 500",
+            ".IXIC:INDEXNASDAQ": "Nasdaq",
+            ".DJI:INDEXDJX": "Dow Jones",
+            "VIX:INDEXCBOE": "CBOE VIX",
+            "UKX:INDEXFTSE": "FTSE 100",
+            "DAX:INDEXDB": "DAX",
+            "NIFTY_BANK:INDEXNSE": "Nifty Bank",
+            "NIFTY_IT:INDEXNSE": "Nifty IT",
+        }
+
+        try:
+            resp = requests.get("https://www.google.com/finance/?hl=en", headers=headers, timeout=8)
+            if resp.status_code == 200:
+                result["is_live"] = True
+                soup = BeautifulSoup(resp.text, "html.parser")
+
+                # A. Global Markets Snapshot
+                seen_quotes = set()
+                parsed_quotes: Dict[str, Dict[str, Any]] = {}
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    for q_key, q_label in target_quotes.items():
+                        if q_key in href and q_key not in seen_quotes:
+                            parts = [t.strip() for t in a.stripped_strings]
+                            # Typical format: [Name, Price, '(', Change, ')', Pct, 'arrow_...']
+                            price_str = parts[1] if len(parts) > 1 else ""
+                            pct_str = next((p for p in parts if p.endswith("%")), "0.00%")
+                            try:
+                                price_val = float(price_str.replace(",", ""))
+                                pct_val = float(pct_str.replace("%", "").replace("+", "").replace(",", ""))
+                                seen_quotes.add(q_key)
+                                parsed_quotes[q_key] = {
+                                    "name": q_label,
+                                    "price": price_str,
+                                    "price_val": price_val,
+                                    "pct": pct_val,
+                                    "pct_str": pct_str,
+                                }
+                            except ValueError:
+                                pass
+
+                for q_key in target_quotes:
+                    if q_key in parsed_quotes:
+                        result["global_markets"].append(parsed_quotes[q_key])
+
+                # B. Live News Headlines (with publisher & time_ago)
+                seen_links = set()
+                seen_titles = set()
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    if not (href.startswith("http") and "google.com" not in href):
+                        continue
+                    if href in seen_links:
+                        continue
+                    raw_text = " ".join(a.get_text(" ", strip=True).split())
+                    if len(raw_text) < 28:
+                        continue
+
+                    # Extract publisher and relative time from ancestor container
+                    publisher = "Google Finance"
+                    time_ago = ""
+                    parent = a.parent
+                    for _ in range(3):
+                        if not parent:
+                            break
+                        p_strings = [s.strip() for s in parent.stripped_strings if s.strip()]
+                        # Look for "·" followed by time_ago and publisher
+                        for i, tok in enumerate(p_strings):
+                            if re.search(r"\b(min|hour|hr|day)s?\.?\s+ago\b", tok, re.I):
+                                time_ago = tok
+                                if i + 1 < len(p_strings) and p_strings[i + 1] not in ("-", "·") and len(p_strings[i + 1]) < 35:
+                                    publisher = p_strings[i + 1]
+                                break
+                        if time_ago:
+                            break
+                        parent = parent.parent
+
+                    # Clean trailing publisher duplication if present
+                    title = raw_text
+                    if publisher != "Google Finance" and title.endswith(publisher):
+                        title = title[: -len(publisher)].strip(" -·")
+
+                    norm_title = re.sub(r"\W+", "", title.lower())[:55]
+                    if norm_title in seen_titles or len(title) < 25:
+                        continue
+                    seen_links.add(href)
+                    seen_titles.add(norm_title)
+
+                    tag, tag_color = self._classify_headline(title)
+                    result["news"].append({
+                        "title": title,
+                        "publisher": publisher,
+                        "time_ago": time_ago,
+                        "link": href,
+                        "tag": tag,
+                        "tag_color": tag_color,
+                    })
+                    if len(result["news"]) >= 10:
+                        break
+
+                # C. Upcoming Earnings Calendar
+                h_earn = soup.find(string=re.compile(r"Upcoming earnings", re.I))
+                if h_earn:
+                    container = h_earn.find_parent()
+                    for _ in range(2):
+                        if container and container.parent:
+                            container = container.parent
+                    if container:
+                        tokens = [t.strip() for t in container.stripped_strings if t.strip()]
+                        # Pattern: Day (Fri), Date (13), Company, 'fitbit_today', Time (2:30 PM IST), Quarter, 'Period', Quarter, 'EPS est.', val, 'Rev est.', val
+                        idx = 0
+                        while idx < len(tokens) - 4:
+                            if tokens[idx] in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") and tokens[idx + 1].isdigit():
+                                day_str = f"{tokens[idx]} {tokens[idx + 1]}"
+                                company = tokens[idx + 2]
+                                time_ist = ""
+                                quarter = ""
+                                eps_est = "—"
+                                rev_est = "—"
+                                scan = idx + 3
+                                while scan < min(idx + 14, len(tokens)):
+                                    tok = tokens[scan]
+                                    if tok in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") and scan + 1 < len(tokens) and tokens[scan + 1].isdigit():
+                                        break
+                                    if "IST" in tok or "EST" in tok or "GMT" in tok:
+                                        time_ist = tok
+                                    elif tok.startswith("Fiscal Q") or tok.startswith("Q"):
+                                        quarter = tok
+                                    elif tok == "EPS est." and scan + 1 < len(tokens):
+                                        eps_est = tokens[scan + 1]
+                                    elif tok == "Rev est." and scan + 1 < len(tokens):
+                                        rev_est = tokens[scan + 1]
+                                    scan += 1
+                                result["upcoming_earnings"].append({
+                                    "day": day_str,
+                                    "company": company,
+                                    "time": time_ist or "Scheduled",
+                                    "quarter": quarter or "Quarterly",
+                                    "eps_est": eps_est,
+                                    "rev_est": rev_est,
+                                })
+                                idx = scan
+                                if len(result["upcoming_earnings"]) >= 6:
+                                    break
+                            else:
+                                idx += 1
+        except Exception:
+            pass
+
+        # D. Fetch live USD/INR from Google Finance Currencies
+        try:
+            rc = requests.get("https://www.google.com/finance/markets/currencies?hl=en", headers=headers, timeout=6)
+            if rc.status_code == 200:
+                sc = BeautifulSoup(rc.text, "html.parser")
+                for a in sc.find_all("a", href=True):
+                    if "/quote/USD-INR" in a["href"]:
+                        parts = [t.strip() for t in a.stripped_strings]
+                        if len(parts) >= 2:
+                            price_val = float(parts[1].replace(",", ""))
+                            chg_tok = next((p for p in parts[2:] if p.startswith("+") or p.startswith("-")), "0")
+                            chg_val = 0.0 if "%" in chg_tok else float(chg_tok.replace(",", ""))
+                            pct_tok = next((p for p in parts if p.endswith("%")), "0%")
+                            pct_val = float(pct_tok.replace("%", "").replace("+", "").replace(",", ""))
+                            result["usdinr"] = {
+                                "price": round(price_val, 2),
+                                "change": round(chg_val, 2),
+                                "pChange": round(pct_val, 2),
+                            }
+                        break
+        except Exception:
+            pass
+
+        return result
+
+    def _classify_headline(self, title: str) -> tuple:
+        """Tags Google Finance headlines by option-seller relevance."""
+        low = title.lower()
+        if any(k in low for k in ("crude", "oil", "brent", "hormuz", "opec", "iran", "war", "tariff", "geopolit", "sanction", "middle east")):
+            return ("Crude & Geopolitics", "#ff9800")
+        if any(k in low for k in ("rbi", "fed", "fomc", "inflation", "cpi", "rate", "yield", "rupee", "dollar", "treasury", "gdp")):
+            return ("Central Banks & Macro", "#ff5252")
+        if any(k in low for k in ("dow", "s&p", "nasdaq", "nvidia", "wall street", "ai ", "tech", "nikkei", "europe")):
+            return ("US & Global Markets", "#ab47bc")
+        if any(k in low for k in ("q1", "q2", "q3", "q4", "results", "earnings", "profit", "ipo", "msci", "fii", "dii", "rejig")):
+            return ("Earnings & Flows", "#00c853")
+        return ("NIFTY & Equities", "#1976d2")
+
+    def _build_google_finance_summary(
+        self,
+        rates: Dict[str, Any],
+        global_markets: List[Dict[str, Any]],
+        news: List[Dict[str, Any]],
+        upcoming_earnings: List[Dict[str, Any]],
+    ) -> str:
+        """Builds a concise, option-seller-focused summary from live Google Finance data."""
+        parts = []
+        m_map = {m["name"]: m for m in global_markets}
+
+        spx = m_map.get("S&P 500")
+        ndx = m_map.get("Nasdaq")
+        vix_us = m_map.get("CBOE VIX")
+        if spx and ndx:
+            us_tone = "risk-on" if spx["pct"] > 0.2 and ndx["pct"] > 0.2 else ("risk-off / soft" if spx["pct"] < -0.2 else "flat / mixed")
+            vix_note = f" (CBOE VIX at {vix_us['price']}, {vix_us['pct_str']})" if vix_us else ""
+            parts.append(f"<b>US Cues:</b> {us_tone} — S&P 500 {spx['pct_str']}, Nasdaq {ndx['pct_str']}{vix_note}.")
+
+        nb = m_map.get("Nifty Bank")
+        nit = m_map.get("Nifty IT")
+        if nb and nit:
+            parts.append(f"<b>India Sectors:</b> Nifty Bank {nb['pct_str']} vs Nifty IT {nit['pct_str']}.")
+
+        brent_p = rates.get("brent", {}).get("price", 0)
+        usdinr_p = rates.get("usdinr", {}).get("price", 0)
+        if brent_p:
+            crude_note = "elevated headwind" if brent_p > 85 else ("benign" if brent_p < 75 else "range-bound")
+            parts.append(f"<b>Macro Pressure:</b> Brent at ${brent_p:.2f} ({crude_note}), USD/INR ₹{usdinr_p:.2f}.")
+
+        if upcoming_earnings:
+            names = ", ".join(e["company"].replace(" Limited", "") for e in upcoming_earnings[:3])
+            parts.append(f"<b>Today's Earnings:</b> {names}.")
+
+        if news:
+            geo_or_macro = next((n for n in news if n["tag"] in ("Crude & Geopolitics", "Central Banks & Macro")), news[0])
+            parts.append(f"<b>Top Catalyst:</b> {geo_or_macro['title']} <i>({geo_or_macro['publisher']})</i>")
+
+        return " ".join(parts) if parts else "Live Google Finance feed active; monitor overnight US indices and crude for gap risk."
+
+    def _fetch_live_rates(self, gf_usdinr: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Fetches live quotes for Brent Crude, DXY, USDINR, US10Y, and India VIX."""
         tickers = {
             "brent": "BZ=F",
@@ -98,6 +362,10 @@ class MacroEventsProvider:
         for k, v in defaults.items():
             if k not in rates_data:
                 rates_data[k] = v
+
+        # Prefer Google Finance live USD/INR quote when available
+        if gf_usdinr and gf_usdinr.get("price"):
+            rates_data["usdinr"] = gf_usdinr
 
         # Add Option Seller Interpretations
         brent_p = rates_data["brent"]["price"]

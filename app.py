@@ -1075,6 +1075,11 @@ m_rates = macro_data.get("rates", {})
 m_news = macro_data.get("news", [])
 m_cal = macro_data.get("calendar", [])
 m_fii = macro_data.get("fii_rules", {})
+m_global = macro_data.get("global_markets", [])
+m_earnings = macro_data.get("upcoming_earnings", [])
+m_gf_summary = macro_data.get("gf_summary", "")
+m_gf_live = macro_data.get("gf_live", False)
+m_updated = macro_data.get("last_updated", "")
 
 # 5 Core Global Macro Ticker Cards
 r_c1, r_c2, r_c3, r_c4, r_c5 = st.columns(5)
@@ -1179,6 +1184,48 @@ with r_c5:
         unsafe_allow_html=True,
     )
 
+# Google Finance Live Global Summary & Benchmarks Strip
+if m_gf_summary or m_global:
+    gf_badge = (
+        f"<span style='color:#00e676; font-weight:600;'>🟢 Live via Google Finance</span>"
+        if m_gf_live
+        else "<span style='color:#ffb300; font-weight:600;'>🟡 Cached Macro Snapshot</span>"
+    )
+    pills_html = ""
+    for gm in m_global:
+        # For CBOE VIX, higher is risk-off (red); for indices, positive is green
+        is_vix = "VIX" in gm["name"]
+        if is_vix:
+            p_color = "#ff5252" if gm["pct"] > 0 else "#00c853"
+        else:
+            p_color = "#00c853" if gm["pct"] >= 0 else "#ff5252"
+        pills_html += (
+            f"<div style='background: rgba(255,255,255,0.03); border: 1px solid #2a2e39; border-radius: 6px; "
+            f"padding: 6px 10px; min-width: 115px; flex: 1;'>"
+            f"<div style='font-size: 0.72rem; color: #848e9c;'>{gm['name']}</div>"
+            f"<div style='font-size: 0.88rem; font-weight: 700; color: #eaecef;'>{gm['price']} "
+            f"<span style='font-size: 0.76rem; color: {p_color}; font-weight: 600;'>({gm['pct_str']})</span></div>"
+            f"</div>"
+        )
+
+    st.markdown(
+        f"""
+        <div class="strike-card" style="padding: 12px 16px; margin-top: 10px; margin-bottom: 12px; border-left: 4px solid #64b5f6;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+                <span style="font-size: 0.86rem; font-weight: 700; color: #eaecef;">🌍 Google Finance Global Macro Summary</span>
+                <span style="font-size: 0.74rem; color: #848e9c;">{gf_badge} • Updated {m_updated} IST • <a href="https://www.google.com/finance/" target="_blank" style="color: #64b5f6; text-decoration: none;">google.com/finance ↗</a></span>
+            </div>
+            <div style="font-size: 0.84rem; color: #cfd8dc; line-height: 1.5; margin-bottom: 10px;">
+                {m_gf_summary}
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                {pills_html}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 macro_tab1, macro_tab2, macro_tab3 = st.tabs([
     "📅 High-Impact Event & Central Bank Calendar",
     "📰 Live Market & Geopolitical Headlines",
@@ -1186,6 +1233,29 @@ macro_tab1, macro_tab2, macro_tab3 = st.tabs([
 ])
 
 with macro_tab1:
+    if m_earnings:
+        st.markdown("**📊 Live Upcoming Corporate Earnings (via Google Finance)**")
+        e_cols = st.columns(min(3, len(m_earnings)))
+        for idx, earn in enumerate(m_earnings):
+            with e_cols[idx % len(e_cols)]:
+                st.markdown(
+                    f"""
+                    <div class="strike-card" style="padding: 10px 14px; margin-bottom: 10px; border-left: 3px solid #64b5f6;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                            <span style="font-size: 0.85rem; font-weight: 700; color: #eaecef;">{earn['company']}</span>
+                            <span style="font-size: 0.72rem; color: #64b5f6; font-weight: 600;">{earn['day']}</span>
+                        </div>
+                        <div style="font-size: 0.76rem; color: #848e9c;">
+                            {earn['quarter']} • {earn['time']}
+                        </div>
+                        <div style="font-size: 0.76rem; color: #cfd8dc; margin-top: 4px;">
+                            EPS Est: <b>{earn['eps_est']}</b> | Rev Est: <b>{earn['rev_est']}</b>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
     st.markdown("**Major Macro & Central Bank Events Dictating Overnight Gap Risk**")
     for ev in m_cal:
         st.markdown(
@@ -1210,18 +1280,19 @@ with macro_tab1:
         )
 
 with macro_tab2:
-    st.markdown("**Real-Time Market, Energy & Geopolitical Headlines**")
+    st.markdown("**Real-Time Market, Energy & Geopolitical Headlines (Google Finance)**")
     if m_news:
         n_col1, n_col2 = st.columns(2)
         for idx, item in enumerate(m_news):
             target_col = n_col1 if idx % 2 == 0 else n_col2
+            pub_meta = f"{item['publisher']} • {item['time_ago']}" if item.get("time_ago") else item["publisher"]
             with target_col:
                 st.markdown(
                     f"""
                     <div class="strike-card" style="padding: 12px 16px; margin-bottom: 10px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                             <span style="font-size: 0.75rem; color: {item['tag_color']}; font-weight: 600; background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius: 4px;">{item['tag']}</span>
-                            <span style="font-size: 0.72rem; color: #848e9c;">{item['publisher']}</span>
+                            <span style="font-size: 0.72rem; color: #848e9c;">{pub_meta}</span>
                         </div>
                         <div style="font-size: 0.88rem; font-weight: 600; color: #eaecef; line-height: 1.4; margin-bottom: 6px;">
                             {item['title']}
