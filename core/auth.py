@@ -103,6 +103,31 @@ class SupabaseAuthClient:
         except Exception as exc:
             return False, f"Connection error: {exc}", None
 
+    def refresh_session(self, refresh_token: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """Restores/refreshes a Supabase session using a stored refresh_token."""
+        if not self.is_configured() or not refresh_token:
+            return False, None
+        try:
+            resp = requests.post(
+                f"{self.url}/auth/v1/token?grant_type=refresh_token",
+                headers=self._headers(),
+                json={"refresh_token": refresh_token.strip()},
+                timeout=10,
+            )
+            data = resp.json() if resp.content else {}
+            if resp.status_code == 200 and data.get("access_token"):
+                user = data.get("user") or {}
+                session = {
+                    "user_id": user.get("id", ""),
+                    "email": user.get("email", ""),
+                    "access_token": data["access_token"],
+                    "refresh_token": data.get("refresh_token", refresh_token),
+                }
+                return True, session
+            return False, None
+        except Exception:
+            return False, None
+
     def send_password_reset(self, email: str) -> Tuple[bool, str]:
         """Sends a password reset email via Supabase."""
         if not self.is_configured():

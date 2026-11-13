@@ -4,7 +4,9 @@ Streamlit Application tailored for Active Option Sellers.
 """
 
 import time
+import json
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
@@ -143,6 +145,45 @@ pos_manager = PositionManager()
 if "auth_session" not in st.session_state:
     st.session_state["auth_session"] = None
 
+# Auto-restore Supabase session from browser cookie after a full page refresh
+if (
+    st.session_state["auth_session"] is None
+    and not st.session_state.get("just_signed_out", False)
+    and auth_client.is_configured()
+):
+    try:
+        saved_rt = st.context.cookies.get("nifty_pulse_rt", "")
+    except Exception:
+        saved_rt = ""
+    if saved_rt:
+        ok_rf, rf_sess = auth_client.refresh_session(saved_rt)
+        if ok_rf and rf_sess:
+            st.session_state["auth_session"] = rf_sess
+            if rf_sess.get("refresh_token"):
+                st.session_state["pending_cookie_op"] = rf_sess["refresh_token"]
+            st.session_state["active_positions"] = pos_manager.load_positions(
+                user_id=rf_sess["user_id"], access_token=rf_sess["access_token"]
+            )
+        else:
+            st.session_state["pending_cookie_op"] = ""
+if st.session_state.get("just_signed_out"):
+    st.session_state["just_signed_out"] = False
+
+# Flush any pending browser cookie update from Sign In / Sign Out / Refresh
+if "pending_cookie_op" in st.session_state:
+    cookie_tok = st.session_state.pop("pending_cookie_op")
+    if cookie_tok:
+        tok_js = json.dumps(cookie_tok)
+        components.html(
+            f"<script>try{{window.parent.document.cookie='nifty_pulse_rt='+encodeURIComponent({tok_js})+'; path=/; max-age=604800; SameSite=Lax';}}catch(e){{document.cookie='nifty_pulse_rt='+encodeURIComponent({tok_js})+'; path=/; max-age=604800; SameSite=Lax';}}</script>",
+            height=0,
+        )
+    else:
+        components.html(
+            "<script>try{window.parent.document.cookie='nifty_pulse_rt=; path=/; max-age=0; SameSite=Lax';}catch(e){document.cookie='nifty_pulse_rt=; path=/; max-age=0; SameSite=Lax';}</script>",
+            height=0,
+        )
+
 # --- SIDEBAR CONFIGURATION ---
 st.sidebar.title("⚡ Option Radar Settings")
 
@@ -167,6 +208,8 @@ with st.sidebar.expander("🔐 User Account (Cloud Sync)", expanded=st.session_s
             if st.button("🚪 Sign Out", key="sb_signout", use_container_width=True):
                 auth_client.sign_out(sess.get("access_token"))
                 st.session_state["auth_session"] = None
+                st.session_state["just_signed_out"] = True
+                st.session_state["pending_cookie_op"] = ""
                 st.session_state["active_positions"] = pos_manager.load_positions()
                 st.rerun()
     else:
@@ -180,6 +223,7 @@ with st.sidebar.expander("🔐 User Account (Cloud Sync)", expanded=st.session_s
                     ok, msg, sess = auth_client.sign_in(l_email, l_pass)
                     if ok and sess:
                         st.session_state["auth_session"] = sess
+                        st.session_state["pending_cookie_op"] = sess.get("refresh_token", "")
                         st.session_state["active_positions"] = pos_manager.load_positions(
                             user_id=sess["user_id"], access_token=sess["access_token"]
                         )
@@ -195,6 +239,7 @@ with st.sidebar.expander("🔐 User Account (Cloud Sync)", expanded=st.session_s
                     ok, msg, sess = auth_client.sign_up(s_email, s_pass)
                     if ok and sess:
                         st.session_state["auth_session"] = sess
+                        st.session_state["pending_cookie_op"] = sess.get("refresh_token", "")
                         st.session_state["active_positions"] = pos_manager.load_positions(
                             user_id=sess["user_id"], access_token=sess["access_token"]
                         )
