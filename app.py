@@ -14,6 +14,7 @@ from core.engine import AnalyticsEngine
 from core.technicals import TechnicalAnalyzer
 from core.macro import MacroEventsProvider
 from core.positions import PositionManager, NIFTY_LOT_SIZE
+from core.auth import SupabaseAuthClient
 from utils.formatting import (
     format_inr,
     format_volume,
@@ -135,9 +136,82 @@ data_manager = DataManager()
 analytics_engine = AnalyticsEngine()
 tech_analyzer = TechnicalAnalyzer()
 macro_provider = MacroEventsProvider()
+auth_client = SupabaseAuthClient()
+pos_manager = PositionManager()
+
+if "auth_session" not in st.session_state:
+    st.session_state["auth_session"] = None
 
 # --- SIDEBAR CONFIGURATION ---
 st.sidebar.title("⚡ Option Radar Settings")
+
+# User Account & Cloud Sync (Supabase)
+with st.sidebar.expander("🔐 User Account (Cloud Sync)", expanded=st.session_state["auth_session"] is None):
+    if not auth_client.is_configured():
+        st.caption(
+            "Cloud login not configured yet. Add `SUPABASE_URL` & `SUPABASE_ANON_KEY` "
+            "to `.streamlit/secrets.toml` (or Streamlit Cloud Secrets) to enable per-user login."
+        )
+    elif st.session_state["auth_session"]:
+        sess = st.session_state["auth_session"]
+        st.success(f"☁️ Signed in as **{sess['email']}**")
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            if st.button("🔄 Sync", key="sb_sync_pos", use_container_width=True):
+                st.session_state["active_positions"] = pos_manager.load_positions(
+                    user_id=sess["user_id"], access_token=sess["access_token"]
+                )
+                st.rerun()
+        with ac2:
+            if st.button("🚪 Sign Out", key="sb_signout", use_container_width=True):
+                auth_client.sign_out(sess.get("access_token"))
+                st.session_state["auth_session"] = None
+                st.session_state["active_positions"] = pos_manager.load_positions()
+                st.rerun()
+    else:
+        auth_tab1, auth_tab2, auth_tab3 = st.tabs(["Sign In", "Sign Up", "Reset"])
+        with auth_tab1:
+            with st.form("sb_login_form"):
+                l_email = st.text_input("Email", key="login_email")
+                l_pass = st.text_input("Password", type="password", key="login_pass")
+                do_login = st.form_submit_button("Sign In", use_container_width=True)
+                if do_login:
+                    ok, msg, sess = auth_client.sign_in(l_email, l_pass)
+                    if ok and sess:
+                        st.session_state["auth_session"] = sess
+                        st.session_state["active_positions"] = pos_manager.load_positions(
+                            user_id=sess["user_id"], access_token=sess["access_token"]
+                        )
+                        st.rerun()
+                    else:
+                        st.error(msg)
+        with auth_tab2:
+            with st.form("sb_signup_form"):
+                s_email = st.text_input("Email", key="signup_email")
+                s_pass = st.text_input("Password (min 6 chars)", type="password", key="signup_pass")
+                do_signup = st.form_submit_button("Create Account", use_container_width=True)
+                if do_signup:
+                    ok, msg, sess = auth_client.sign_up(s_email, s_pass)
+                    if ok and sess:
+                        st.session_state["auth_session"] = sess
+                        st.session_state["active_positions"] = pos_manager.load_positions(
+                            user_id=sess["user_id"], access_token=sess["access_token"]
+                        )
+                        st.rerun()
+                    elif ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+        with auth_tab3:
+            with st.form("sb_reset_form"):
+                r_email = st.text_input("Account Email", key="reset_email")
+                do_reset = st.form_submit_button("Send Reset Link", use_container_width=True)
+                if do_reset:
+                    ok, msg = auth_client.send_password_reset(r_email)
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
 
 # Strike Selection & IV Controls
 st.sidebar.subheader("🎯 Option Seller Parameters")
@@ -605,14 +679,24 @@ with st.expander("📊 View Live NSE Option Chain Table (Direct from nseindia.co
 st.markdown("---")
 
 # --- SECTION: MY ACTIVE POSITIONS & RISK/PROFIT STRATEGY ADVISOR ---
-pos_manager = PositionManager()
+auth_sess = st.session_state.get("auth_session")
+auth_uid = auth_sess.get("user_id") if auth_sess else None
+auth_tok = auth_sess.get("access_token") if auth_sess else None
+
 if "active_positions" not in st.session_state:
-    st.session_state["active_positions"] = pos_manager.load_positions()
+    st.session_state["active_positions"] = pos_manager.load_positions(
+        user_id=auth_uid, access_token=auth_tok
+    )
 
 st.subheader("💼 My Active Positions & Risk / Profit Adjustment Advisor")
+sync_label = (
+    f"☁️ Synced to `{auth_sess['email']}`"
+    if auth_sess
+    else "💻 Guest Mode (Sign in from sidebar to save positions per-user in the cloud)"
+)
 st.caption(
-    "Enter your open NIFTY option legs below. Positions are marked to market against the live NSE Option Chain "
-    "to calculate real-time P&L, payoff, and tailored strategies to minimize tail risk and boost profit."
+    f"Enter your open or closed NIFTY option legs below ({sync_label}). "
+    "Positions are marked to market against the live NSE Option Chain to calculate real-time P&L, payoff, and tailored strategies."
 )
 
 avail_expiries = official_expiries[:4] if official_expiries else [curr_chain.get("expiry", "17-Nov-2026")]
@@ -661,6 +745,8 @@ with st.form("add_position_form", clear_on_submit=False):
             lots=int(pos_lots),
             entry_price=resolved_entry,
             exit_price=float(pos_exit),
+            user_id=auth_uid,
+            access_token=auth_tok,
         )
         st.rerun()
 
@@ -742,7 +828,9 @@ if active_pos_list:
         st.markdown("**📋 Open Option Legs (Live NSE Mark-to-Market)**")
     with hdr_col2:
         if st.button("🗑️ Clear All", key="clear_all_positions", use_container_width=True):
-            st.session_state["active_positions"] = pos_manager.clear_positions()
+            st.session_state["active_positions"] = pos_manager.clear_positions(
+                user_id=auth_uid, access_token=auth_tok
+            )
             st.rerun()
 
     if "editing_leg_id" not in st.session_state:
@@ -790,7 +878,10 @@ if active_pos_list:
                 if st.session_state["editing_leg_id"] == leg["id"]:
                     st.session_state["editing_leg_id"] = None
                 st.session_state["active_positions"] = pos_manager.remove_position(
-                    st.session_state["active_positions"], leg["id"]
+                    st.session_state["active_positions"],
+                    leg["id"],
+                    user_id=auth_uid,
+                    access_token=auth_tok,
                 )
                 st.rerun()
 
@@ -836,6 +927,8 @@ if active_pos_list:
                         lots=int(e_lots),
                         entry_price=resolved_e,
                         exit_price=float(e_exit),
+                        user_id=auth_uid,
+                        access_token=auth_tok,
                     )
                     st.session_state["editing_leg_id"] = None
                     st.rerun()

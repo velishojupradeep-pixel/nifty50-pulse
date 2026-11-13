@@ -13,6 +13,8 @@ __pycache__/
 .vol_cache.json
 .nse_chain_cache.json
 .tech_cache.json
+.macro_cache.json
+.active_positions.json
 *.cache.json
 .*cache.json
 .DS_Store

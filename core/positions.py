@@ -10,6 +10,9 @@ import json
 import math
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
+import requests
+
+from core.auth import get_supabase_credentials
 
 POSITIONS_FILE = os.path.expanduser(
     "~/.gemini/antigravity/scratch/nifty50-pulse/.active_positions.json"
@@ -42,9 +45,53 @@ def estimate_option_delta(
 
 
 class PositionManager:
-    """Manages active user positions and generates live risk/profit strategies."""
+    """Manages active user positions (Supabase cloud per-user or local fallback) and generates live risk/profit strategies."""
 
-    def load_positions(self) -> List[Dict[str, Any]]:
+    def _sb_headers(self, access_token: str) -> Dict[str, str]:
+        _, anon_key = get_supabase_credentials()
+        return {
+            "apikey": anon_key,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+
+    def _use_supabase(self, user_id: Optional[str], access_token: Optional[str]) -> bool:
+        url, key = get_supabase_credentials()
+        return bool(url and key and user_id and access_token)
+
+    def load_positions(
+        self, user_id: Optional[str] = None, access_token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        if self._use_supabase(user_id, access_token):
+            url, _ = get_supabase_credentials()
+            try:
+                resp = requests.get(
+                    f"{url}/rest/v1/positions",
+                    headers=self._sb_headers(access_token),
+                    params={"user_id": f"eq.{user_id}", "order": "created_at.asc"},
+                    timeout=8,
+                )
+                if resp.status_code == 200:
+                    rows = resp.json()
+                    return [
+                        {
+                            "id": str(r["id"]),
+                            "side": r["side"],
+                            "type": r["type"],
+                            "strike": int(r["strike"]),
+                            "expiry": r["expiry"],
+                            "lots": int(r["lots"]),
+                            "qty": int(r["lots"]) * NIFTY_LOT_SIZE,
+                            "entry_price": float(r["entry_price"]),
+                            "exit_price": float(r.get("exit_price", 0.0) or 0.0),
+                        }
+                        for r in rows
+                    ]
+            except Exception:
+                pass
+            return []
+
         if os.path.exists(POSITIONS_FILE):
             try:
                 with open(POSITIONS_FILE, "r") as f:
@@ -72,6 +119,8 @@ class PositionManager:
         lots: int,
         entry_price: float,
         exit_price: float = 0.0,
+        user_id: Optional[str] = None,
+        access_token: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         new_leg = {
             "id": str(uuid.uuid4())[:8],
@@ -84,6 +133,22 @@ class PositionManager:
             "entry_price": round(float(entry_price), 2),
             "exit_price": round(float(exit_price), 2),
         }
+        if self._use_supabase(user_id, access_token):
+            url, _ = get_supabase_credentials()
+            try:
+                payload = {**new_leg, "user_id": user_id}
+                resp = requests.post(
+                    f"{url}/rest/v1/positions",
+                    headers=self._sb_headers(access_token),
+                    json=payload,
+                    timeout=8,
+                )
+                if resp.status_code in (200, 201):
+                    return list(positions) + [new_leg]
+            except Exception:
+                pass
+            return list(positions)
+
         updated = list(positions) + [new_leg]
         self.save_positions(updated)
         return updated
@@ -99,34 +164,82 @@ class PositionManager:
         lots: int,
         entry_price: float,
         exit_price: float = 0.0,
+        user_id: Optional[str] = None,
+        access_token: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        fields = {
+            "side": side.upper(),
+            "type": opt_type.upper(),
+            "strike": int(strike),
+            "expiry": expiry,
+            "lots": int(lots),
+            "qty": int(lots) * NIFTY_LOT_SIZE,
+            "entry_price": round(float(entry_price), 2),
+            "exit_price": round(float(exit_price), 2),
+        }
+        if self._use_supabase(user_id, access_token):
+            url, _ = get_supabase_credentials()
+            try:
+                requests.patch(
+                    f"{url}/rest/v1/positions",
+                    headers=self._sb_headers(access_token),
+                    params={"id": f"eq.{leg_id}", "user_id": f"eq.{user_id}"},
+                    json=fields,
+                    timeout=8,
+                )
+            except Exception:
+                pass
+
         updated = []
         for p in positions:
             if p.get("id") == leg_id:
-                updated.append({
-                    "id": leg_id,
-                    "side": side.upper(),
-                    "type": opt_type.upper(),
-                    "strike": int(strike),
-                    "expiry": expiry,
-                    "lots": int(lots),
-                    "qty": int(lots) * NIFTY_LOT_SIZE,
-                    "entry_price": round(float(entry_price), 2),
-                    "exit_price": round(float(exit_price), 2),
-                })
+                updated.append({"id": leg_id, **fields})
             else:
                 updated.append(p)
-        self.save_positions(updated)
+        if not self._use_supabase(user_id, access_token):
+            self.save_positions(updated)
         return updated
 
     def remove_position(
-        self, positions: List[Dict[str, Any]], leg_id: str
+        self,
+        positions: List[Dict[str, Any]],
+        leg_id: str,
+        user_id: Optional[str] = None,
+        access_token: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        if self._use_supabase(user_id, access_token):
+            url, _ = get_supabase_credentials()
+            try:
+                requests.delete(
+                    f"{url}/rest/v1/positions",
+                    headers=self._sb_headers(access_token),
+                    params={"id": f"eq.{leg_id}", "user_id": f"eq.{user_id}"},
+                    timeout=8,
+                )
+            except Exception:
+                pass
+            return [p for p in positions if p.get("id") != leg_id]
+
         updated = [p for p in positions if p.get("id") != leg_id]
         self.save_positions(updated)
         return updated
 
-    def clear_positions(self) -> List[Dict[str, Any]]:
+    def clear_positions(
+        self, user_id: Optional[str] = None, access_token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        if self._use_supabase(user_id, access_token):
+            url, _ = get_supabase_credentials()
+            try:
+                requests.delete(
+                    f"{url}/rest/v1/positions",
+                    headers=self._sb_headers(access_token),
+                    params={"user_id": f"eq.{user_id}"},
+                    timeout=8,
+                )
+            except Exception:
+                pass
+            return []
+
         self.save_positions([])
         return []
 
