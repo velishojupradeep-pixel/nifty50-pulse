@@ -15,6 +15,7 @@ from core.technicals import TechnicalAnalyzer
 from core.macro import MacroEventsProvider
 from core.positions import PositionManager, NIFTY_LOT_SIZE
 from core.auth import SupabaseAuthClient
+from core.zerodha import fetch_kite_positions, exchange_request_token, parse_kite_csv
 from utils.formatting import (
     format_inr,
     format_volume,
@@ -287,12 +288,18 @@ if st.sidebar.button("🔄 Sync Now", use_container_width=True):
 st.sidebar.markdown("---")
 # Broker API Connection Drawer
 with st.sidebar.expander("🔌 Connect Broker API (Zerodha / Dhan)"):
-    st.caption("Stream live tick data & market depth with zero delay.")
+    st.caption("Connect Zerodha Kite Connect to sync your live positions.")
     broker_select = st.selectbox("Broker", ["Zerodha Kite Connect", "DhanHQ", "Fyers API"])
-    api_key_input = st.text_input("API Key", type="password")
-    api_secret_input = st.text_input("Access Token / Secret", type="password")
+    api_key_input = st.text_input(
+        "API Key", value=st.session_state.get("kite_api_key", ""), type="password"
+    )
+    api_secret_input = st.text_input(
+        "Access Token", value=st.session_state.get("kite_access_token", ""), type="password"
+    )
     if st.button("Save Broker Credentials"):
-        st.success("Credentials saved. Will use broker websocket when live session is authenticated.")
+        st.session_state["kite_api_key"] = api_key_input.strip()
+        st.session_state["kite_access_token"] = api_secret_input.strip()
+        st.success("Broker credentials saved for this session.")
 
 # --- TOP HEADER: NIFTY 50 SNAPSHOT ---
 n_meta = market["nifty_meta"]
@@ -703,6 +710,108 @@ avail_expiries = official_expiries[:4] if official_expiries else [curr_chain.get
 atm_default = int(round(ltp / 50.0) * 50) if ltp > 0 else 25200
 strike_choices = list(range(atm_default - 1200, atm_default + 1250, 50))
 default_ce_idx = strike_choices.index(atm_default + 200) if (atm_default + 200) in strike_choices else len(strike_choices) // 2
+
+with st.expander("🔗 Sync Positions from Zerodha Kite (API or CSV Export)", expanded=False):
+    z_tab1, z_tab2 = st.tabs(["⚡ Kite Connect API", "📄 Kite Web CSV Upload"])
+    with z_tab1:
+        zc1, zc2, zc3 = st.columns([1.2, 1.4, 0.9])
+        with zc1:
+            z_api_key = st.text_input(
+                "Zerodha API Key",
+                value=st.session_state.get("kite_api_key", ""),
+                type="password",
+                key="z_api_key_in",
+            )
+        with zc2:
+            z_access_token = st.text_input(
+                "Zerodha Access Token",
+                value=st.session_state.get("kite_access_token", ""),
+                type="password",
+                key="z_access_tok_in",
+            )
+        with zc3:
+            z_replace = st.checkbox("Replace current", value=True, key="z_replace_chk")
+
+        zb1, zb2 = st.columns([1.2, 2.3])
+        with zb1:
+            if st.button("🔄 Sync Zerodha Positions", key="btn_sync_zerodha", use_container_width=True):
+                st.session_state["kite_api_key"] = z_api_key.strip()
+                st.session_state["kite_access_token"] = z_access_token.strip()
+                ok_z, msg_z, z_legs = fetch_kite_positions(
+                    z_api_key, z_access_token, official_expiries=official_expiries
+                )
+                if ok_z and z_legs:
+                    if z_replace:
+                        st.session_state["active_positions"] = pos_manager.clear_positions(
+                            user_id=auth_uid, access_token=auth_tok
+                        )
+                    for zl in z_legs:
+                        st.session_state["active_positions"] = pos_manager.add_position(
+                            st.session_state["active_positions"],
+                            side=zl["side"],
+                            opt_type=zl["type"],
+                            strike=zl["strike"],
+                            expiry=zl["expiry"],
+                            lots=zl["lots"],
+                            entry_price=zl["entry_price"],
+                            exit_price=zl["exit_price"],
+                            user_id=auth_uid,
+                            access_token=auth_tok,
+                        )
+                    st.success(msg_z)
+                    st.rerun()
+                elif ok_z:
+                    st.info(msg_z)
+                else:
+                    st.error(msg_z)
+        with zb2:
+            if z_api_key.strip():
+                st.markdown(
+                    f"[Open Kite Login URL to get Request Token ↗](https://kite.zerodha.com/connect/login?v=3&api_key={z_api_key.strip()})"
+                )
+            with st.popover("🔑 Generate Access Token from Request Token"):
+                z_secret = st.text_input("API Secret", type="password", key="z_api_secret_in")
+                z_req_tok = st.text_input("Request Token (from redirect URL)", key="z_req_tok_in")
+                if st.button("Exchange for Access Token", key="btn_kite_exchange"):
+                    ok_ex, msg_ex, new_tok = exchange_request_token(z_api_key, z_secret, z_req_tok)
+                    if ok_ex and new_tok:
+                        st.session_state["kite_api_key"] = z_api_key.strip()
+                        st.session_state["kite_access_token"] = new_tok
+                        st.success(msg_ex)
+                        st.rerun()
+                    else:
+                        st.error(msg_ex)
+
+    with z_tab2:
+        st.caption("No Kite Connect API? Export your positions CSV from `kite.zerodha.com/positions` and upload it below.")
+        z_csv_file = st.file_uploader("Upload Kite Positions CSV", type=["csv"], key="z_csv_up")
+        z_csv_replace = st.checkbox("Replace current positions on CSV import", value=True, key="z_csv_replace")
+        if z_csv_file is not None:
+            if st.button("📥 Import Kite CSV", key="btn_import_kite_csv"):
+                csv_text = z_csv_file.getvalue().decode("utf-8", errors="ignore")
+                ok_c, msg_c, c_legs = parse_kite_csv(csv_text, official_expiries=official_expiries)
+                if ok_c and c_legs:
+                    if z_csv_replace:
+                        st.session_state["active_positions"] = pos_manager.clear_positions(
+                            user_id=auth_uid, access_token=auth_tok
+                        )
+                    for cl in c_legs:
+                        st.session_state["active_positions"] = pos_manager.add_position(
+                            st.session_state["active_positions"],
+                            side=cl["side"],
+                            opt_type=cl["type"],
+                            strike=cl["strike"],
+                            expiry=cl["expiry"],
+                            lots=cl["lots"],
+                            entry_price=cl["entry_price"],
+                            exit_price=cl["exit_price"],
+                            user_id=auth_uid,
+                            access_token=auth_tok,
+                        )
+                    st.success(msg_c)
+                    st.rerun()
+                else:
+                    st.error(msg_c)
 
 with st.form("add_position_form", clear_on_submit=False):
     f_c1, f_c2, f_c3, f_c4, f_c5, f_c6, f_c7, f_c8 = st.columns([0.9, 0.8, 1.3, 1.0, 0.9, 1.15, 1.15, 1.1])
