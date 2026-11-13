@@ -86,6 +86,35 @@ class PositionManager:
         self.save_positions(updated)
         return updated
 
+    def update_position(
+        self,
+        positions: List[Dict[str, Any]],
+        leg_id: str,
+        side: str,
+        opt_type: str,
+        strike: int,
+        expiry: str,
+        lots: int,
+        entry_price: float,
+    ) -> List[Dict[str, Any]]:
+        updated = []
+        for p in positions:
+            if p.get("id") == leg_id:
+                updated.append({
+                    "id": leg_id,
+                    "side": side.upper(),
+                    "type": opt_type.upper(),
+                    "strike": int(strike),
+                    "expiry": expiry,
+                    "lots": int(lots),
+                    "qty": int(lots) * NIFTY_LOT_SIZE,
+                    "entry_price": round(float(entry_price), 2),
+                })
+            else:
+                updated.append(p)
+        self.save_positions(updated)
+        return updated
+
     def remove_position(
         self, positions: List[Dict[str, Any]], leg_id: str
     ) -> List[Dict[str, Any]]:

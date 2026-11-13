@@ -738,8 +738,11 @@ if active_pos_list:
             st.session_state["active_positions"] = pos_manager.clear_positions()
             st.rerun()
 
+    if "editing_leg_id" not in st.session_state:
+        st.session_state["editing_leg_id"] = None
+
     for leg in eval_res["enriched_legs"]:
-        l_col1, l_col2 = st.columns([11, 1])
+        l_col1, l_col2, l_col3 = st.columns([10.5, 0.75, 0.75])
         side_color = "#ff5252" if leg["side"] == "SELL" else "#64b5f6"
         pnl_color = "#00e676" if leg["pnl"] >= 0 else "#ff5252"
         pnl_sign = "+" if leg["pnl"] >= 0 else ""
@@ -765,11 +768,65 @@ if active_pos_list:
                 unsafe_allow_html=True,
             )
         with l_col2:
+            if st.button("✏️", key=f"edit_leg_btn_{leg['id']}", help="Edit leg"):
+                st.session_state["editing_leg_id"] = (
+                    None if st.session_state["editing_leg_id"] == leg["id"] else leg["id"]
+                )
+                st.rerun()
+        with l_col3:
             if st.button("✖", key=f"del_leg_{leg['id']}", help="Remove leg"):
+                if st.session_state["editing_leg_id"] == leg["id"]:
+                    st.session_state["editing_leg_id"] = None
                 st.session_state["active_positions"] = pos_manager.remove_position(
                     st.session_state["active_positions"], leg["id"]
                 )
                 st.rerun()
+
+        if st.session_state.get("editing_leg_id") == leg["id"]:
+            edit_expiries = list(dict.fromkeys(avail_expiries + [leg["expiry"]]))
+            edit_strikes = sorted(set(strike_choices + [int(leg["strike"])]))
+            with st.form(f"edit_leg_form_{leg['id']}"):
+                ec1, ec2, ec3, ec4, ec5, ec6, ec7, ec8 = st.columns([0.9, 0.8, 1.3, 1.0, 0.8, 1.1, 0.8, 0.8])
+                with ec1:
+                    e_side = st.selectbox("Side", ["SELL", "BUY"], index=0 if leg["side"] == "SELL" else 1, key=f"e_side_{leg['id']}")
+                with ec2:
+                    e_type = st.selectbox("Type", ["CE", "PE"], index=0 if leg["type"] == "CE" else 1, key=f"e_type_{leg['id']}")
+                with ec3:
+                    e_exp = st.selectbox("Expiry", edit_expiries, index=edit_expiries.index(leg["expiry"]), key=f"e_exp_{leg['id']}")
+                with ec4:
+                    e_strike = st.selectbox("Strike", edit_strikes, index=edit_strikes.index(int(leg["strike"])), key=f"e_strike_{leg['id']}")
+                with ec5:
+                    e_lots = st.number_input("Lots", min_value=1, max_value=500, value=int(leg["lots"]), step=1, key=f"e_lots_{leg['id']}")
+                with ec6:
+                    e_entry = st.number_input("Entry ₹", min_value=0.0, max_value=5000.0, value=float(leg["entry_price"]), step=0.5, key=f"e_entry_{leg['id']}")
+                with ec7:
+                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                    save_edit = st.form_submit_button("💾 Save", use_container_width=True)
+                with ec8:
+                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                    cancel_edit = st.form_submit_button("Cancel", use_container_width=True)
+
+                if save_edit:
+                    resolved_e = float(e_entry)
+                    if resolved_e <= 0.0:
+                        t_chain = next_chain if (next_chain and e_exp == next_chain.get("expiry")) else curr_chain
+                        s_r = (t_chain or {}).get("strikes_map", {}).get(int(e_strike), {})
+                        resolved_e = float(s_r.get("ce_ltp" if e_type == "CE" else "pe_ltp", 0.0)) or 50.0
+                    st.session_state["active_positions"] = pos_manager.update_position(
+                        st.session_state["active_positions"],
+                        leg_id=leg["id"],
+                        side=e_side,
+                        opt_type=e_type,
+                        strike=int(e_strike),
+                        expiry=e_exp,
+                        lots=int(e_lots),
+                        entry_price=resolved_e,
+                    )
+                    st.session_state["editing_leg_id"] = None
+                    st.rerun()
+                elif cancel_edit:
+                    st.session_state["editing_leg_id"] = None
+                    st.rerun()
 
     # Strategy Suggestions + Expiry Payoff Curve
     strat_col, payoff_col = st.columns([1.25, 1.0])
