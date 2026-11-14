@@ -5,6 +5,8 @@ Streamlit Application tailored for Active Option Sellers.
 
 import time
 import json
+import base64
+import urllib.parse
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -145,6 +147,34 @@ pos_manager = PositionManager()
 if "auth_session" not in st.session_state:
     st.session_state["auth_session"] = None
 
+
+def _encode_cookie_session(sess: dict) -> str:
+    payload = {
+        "u": sess.get("user_id", ""),
+        "e": sess.get("email", ""),
+        "a": sess.get("access_token", ""),
+        "r": sess.get("refresh_token", ""),
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_cookie_session(raw_val: str) -> dict:
+    try:
+        unquoted = urllib.parse.unquote(raw_val.strip())
+        data = json.loads(base64.urlsafe_b64decode(unquoted.encode("ascii")).decode("utf-8"))
+        if isinstance(data, dict) and (data.get("a") or data.get("r")):
+            return {
+                "user_id": data.get("u", ""),
+                "email": data.get("e", ""),
+                "access_token": data.get("a", ""),
+                "refresh_token": data.get("r", ""),
+            }
+    except Exception:
+        pass
+    return {}
+
+
 # Auto-restore Supabase session from browser cookie after a full page refresh
 if (
     st.session_state["auth_session"] is None
@@ -152,20 +182,44 @@ if (
     and auth_client.is_configured()
 ):
     try:
-        saved_rt = st.context.cookies.get("nifty_pulse_rt", "")
+        cookies_map = st.context.cookies
     except Exception:
-        saved_rt = ""
-    if saved_rt:
-        ok_rf, rf_sess = auth_client.refresh_session(saved_rt)
+        cookies_map = {}
+
+    raw_sess = cookies_map.get("nifty_pulse_session", "")
+    parsed_sess = _decode_cookie_session(raw_sess) if raw_sess else {}
+
+    restored_sess = None
+    if parsed_sess.get("access_token"):
+        ok_u, u_info = auth_client.get_user(parsed_sess["access_token"])
+        if ok_u and u_info:
+            restored_sess = {
+                "user_id": u_info["user_id"],
+                "email": u_info.get("email") or parsed_sess.get("email", ""),
+                "access_token": parsed_sess["access_token"],
+                "refresh_token": parsed_sess.get("refresh_token", ""),
+            }
+
+    if not restored_sess and parsed_sess.get("refresh_token"):
+        ok_rf, rf_sess = auth_client.refresh_session(parsed_sess["refresh_token"])
         if ok_rf and rf_sess:
-            st.session_state["auth_session"] = rf_sess
-            if rf_sess.get("refresh_token"):
-                st.session_state["pending_cookie_op"] = rf_sess["refresh_token"]
-            st.session_state["active_positions"] = pos_manager.load_positions(
-                user_id=rf_sess["user_id"], access_token=rf_sess["access_token"]
-            )
-        else:
-            st.session_state["pending_cookie_op"] = ""
+            restored_sess = rf_sess
+            st.session_state["pending_cookie_op"] = _encode_cookie_session(rf_sess)
+
+    if not restored_sess:
+        legacy_rt = urllib.parse.unquote(cookies_map.get("nifty_pulse_rt", ""))
+        if legacy_rt:
+            ok_rf, rf_sess = auth_client.refresh_session(legacy_rt)
+            if ok_rf and rf_sess:
+                restored_sess = rf_sess
+                st.session_state["pending_cookie_op"] = _encode_cookie_session(rf_sess)
+
+    if restored_sess:
+        st.session_state["auth_session"] = restored_sess
+        st.session_state["active_positions"] = pos_manager.load_positions(
+            user_id=restored_sess["user_id"], access_token=restored_sess["access_token"]
+        )
+
 if st.session_state.get("just_signed_out"):
     st.session_state["just_signed_out"] = False
 
@@ -175,12 +229,12 @@ if "pending_cookie_op" in st.session_state:
     if cookie_tok:
         tok_js = json.dumps(cookie_tok)
         components.html(
-            f"<script>try{{window.parent.document.cookie='nifty_pulse_rt='+encodeURIComponent({tok_js})+'; path=/; max-age=604800; SameSite=Lax';}}catch(e){{document.cookie='nifty_pulse_rt='+encodeURIComponent({tok_js})+'; path=/; max-age=604800; SameSite=Lax';}}</script>",
+            f"<script>var attr='; path=/; max-age=2592000'+(location.protocol==='https:'?'; SameSite=None; Secure':'; SameSite=Lax');try{{window.parent.document.cookie='nifty_pulse_session='+{tok_js}+attr;}}catch(e){{document.cookie='nifty_pulse_session='+{tok_js}+attr;}}</script>",
             height=0,
         )
     else:
         components.html(
-            "<script>try{window.parent.document.cookie='nifty_pulse_rt=; path=/; max-age=0; SameSite=Lax';}catch(e){document.cookie='nifty_pulse_rt=; path=/; max-age=0; SameSite=Lax';}</script>",
+            "<script>var attr='; path=/; max-age=0'+(location.protocol==='https:'?'; SameSite=None; Secure':'; SameSite=Lax');try{window.parent.document.cookie='nifty_pulse_session='+attr;window.parent.document.cookie='nifty_pulse_rt='+attr;}catch(e){document.cookie='nifty_pulse_session='+attr;document.cookie='nifty_pulse_rt='+attr;}</script>",
             height=0,
         )
 
@@ -223,7 +277,7 @@ with st.sidebar.expander("🔐 User Account (Cloud Sync)", expanded=st.session_s
                     ok, msg, sess = auth_client.sign_in(l_email, l_pass)
                     if ok and sess:
                         st.session_state["auth_session"] = sess
-                        st.session_state["pending_cookie_op"] = sess.get("refresh_token", "")
+                        st.session_state["pending_cookie_op"] = _encode_cookie_session(sess)
                         st.session_state["active_positions"] = pos_manager.load_positions(
                             user_id=sess["user_id"], access_token=sess["access_token"]
                         )
@@ -239,7 +293,7 @@ with st.sidebar.expander("🔐 User Account (Cloud Sync)", expanded=st.session_s
                     ok, msg, sess = auth_client.sign_up(s_email, s_pass)
                     if ok and sess:
                         st.session_state["auth_session"] = sess
-                        st.session_state["pending_cookie_op"] = sess.get("refresh_token", "")
+                        st.session_state["pending_cookie_op"] = _encode_cookie_session(sess)
                         st.session_state["active_positions"] = pos_manager.load_positions(
                             user_id=sess["user_id"], access_token=sess["access_token"]
                         )

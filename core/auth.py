@@ -103,6 +103,28 @@ class SupabaseAuthClient:
         except Exception as exc:
             return False, f"Connection error: {exc}", None
 
+    def get_user(self, access_token: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """Validates an existing access_token via Supabase /auth/v1/user without rotating refresh_token."""
+        if not self.is_configured() or not access_token:
+            return False, None
+        try:
+            resp = requests.get(
+                f"{self.url}/auth/v1/user",
+                headers=self._headers(access_token.strip()),
+                timeout=8,
+            )
+            if resp.status_code == 200:
+                user = resp.json() if resp.content else {}
+                if user.get("id"):
+                    return True, {
+                        "user_id": user["id"],
+                        "email": user.get("email", ""),
+                        "access_token": access_token.strip(),
+                    }
+            return False, None
+        except Exception:
+            return False, None
+
     def refresh_session(self, refresh_token: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """Restores/refreshes a Supabase session using a stored refresh_token."""
         if not self.is_configured() or not refresh_token:
