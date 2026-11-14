@@ -6,3 +6,4 @@ yfinance>=0.2.40
 streamlit-autorefresh>=1.0.1
 curl_cffi>=0.7.0
 beautifulsoup4>=4.12.0
+streamlit-cookies-controller>=0.0.4

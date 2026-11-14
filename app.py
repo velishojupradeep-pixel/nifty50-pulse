@@ -8,10 +8,10 @@ import json
 import base64
 import urllib.parse
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
+from streamlit_cookies_controller import CookieController
 
 from data.manager import DataManager
 from core.engine import AnalyticsEngine
@@ -147,6 +147,8 @@ pos_manager = PositionManager()
 if "auth_session" not in st.session_state:
     st.session_state["auth_session"] = None
 
+cookie_ctrl = CookieController(key="nifty_cookies")
+
 
 def _encode_cookie_session(sess: dict) -> str:
     payload = {
@@ -161,7 +163,9 @@ def _encode_cookie_session(sess: dict) -> str:
 
 def _decode_cookie_session(raw_val: str) -> dict:
     try:
-        unquoted = urllib.parse.unquote(raw_val.strip())
+        if not raw_val:
+            return {}
+        unquoted = urllib.parse.unquote(str(raw_val).strip())
         data = json.loads(base64.urlsafe_b64decode(unquoted.encode("ascii")).decode("utf-8"))
         if isinstance(data, dict) and (data.get("a") or data.get("r")):
             return {
@@ -181,12 +185,13 @@ if (
     and not st.session_state.get("just_signed_out", False)
     and auth_client.is_configured()
 ):
-    try:
-        cookies_map = st.context.cookies
-    except Exception:
-        cookies_map = {}
+    raw_sess = cookie_ctrl.get("nifty_pulse_session")
+    if not raw_sess:
+        try:
+            raw_sess = st.context.cookies.get("nifty_pulse_session", "")
+        except Exception:
+            raw_sess = ""
 
-    raw_sess = cookies_map.get("nifty_pulse_session", "")
     parsed_sess = _decode_cookie_session(raw_sess) if raw_sess else {}
 
     restored_sess = None
@@ -206,14 +211,6 @@ if (
             restored_sess = rf_sess
             st.session_state["pending_cookie_op"] = _encode_cookie_session(rf_sess)
 
-    if not restored_sess:
-        legacy_rt = urllib.parse.unquote(cookies_map.get("nifty_pulse_rt", ""))
-        if legacy_rt:
-            ok_rf, rf_sess = auth_client.refresh_session(legacy_rt)
-            if ok_rf and rf_sess:
-                restored_sess = rf_sess
-                st.session_state["pending_cookie_op"] = _encode_cookie_session(rf_sess)
-
     if restored_sess:
         st.session_state["auth_session"] = restored_sess
         st.session_state["active_positions"] = pos_manager.load_positions(
@@ -227,16 +224,19 @@ if st.session_state.get("just_signed_out"):
 if "pending_cookie_op" in st.session_state:
     cookie_tok = st.session_state.pop("pending_cookie_op")
     if cookie_tok:
-        tok_js = json.dumps(cookie_tok)
-        components.html(
-            f"<script>var attr='; path=/; max-age=2592000'+(location.protocol==='https:'?'; SameSite=None; Secure':'; SameSite=Lax');try{{window.parent.document.cookie='nifty_pulse_session='+{tok_js}+attr;}}catch(e){{document.cookie='nifty_pulse_session='+{tok_js}+attr;}}</script>",
-            height=0,
+        cookie_ctrl.set(
+            "nifty_pulse_session",
+            cookie_tok,
+            path="/",
+            max_age=2592000,
+            same_site="lax",
         )
     else:
-        components.html(
-            "<script>var attr='; path=/; max-age=0'+(location.protocol==='https:'?'; SameSite=None; Secure':'; SameSite=Lax');try{window.parent.document.cookie='nifty_pulse_session='+attr;window.parent.document.cookie='nifty_pulse_rt='+attr;}catch(e){document.cookie='nifty_pulse_session='+attr;document.cookie='nifty_pulse_rt='+attr;}</script>",
-            height=0,
-        )
+        try:
+            if cookie_ctrl.get("nifty_pulse_session") is not None:
+                cookie_ctrl.remove("nifty_pulse_session", path="/", same_site="lax")
+        except Exception:
+            pass
 
 # --- SIDEBAR CONFIGURATION ---
 st.sidebar.title("⚡ Option Radar Settings")
