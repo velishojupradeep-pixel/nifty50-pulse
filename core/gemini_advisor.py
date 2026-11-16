@@ -135,9 +135,9 @@ def ask_gemini_strategist(
             json={
                 "system_instruction": {"parts": [{"text": system_instruction}]},
                 "contents": contents,
-                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200},
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1500},
             },
-            timeout=25,
+            timeout=(10, 60),
         )
         data = resp.json() if resp.content else {}
         if resp.status_code == 200:
