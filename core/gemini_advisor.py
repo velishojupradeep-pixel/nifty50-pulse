@@ -200,6 +200,36 @@ def ask_gemini_strategist(
         return False, f"Connection error calling Gemini: {exc}"
 
 
+def _pick_available_groq_model(api_key: str) -> Optional[str]:
+    """Queries Groq /openai/v1/models to pick the best available chat model."""
+    try:
+        r = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {api_key.strip()}"},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return None
+        models = [
+            m.get("id", "")
+            for m in (r.json().get("data") or [])
+            if m.get("id")
+            and not any(
+                skip in m["id"].lower()
+                for skip in ("whisper", "tts", "guard", "prompt-guard", "distil-whisper", "playai")
+            )
+        ]
+        if not models:
+            return None
+        for pref in ("llama-4", "llama-3.3", "qwen", "gpt-oss", "deepseek", "llama-3.1", "llama"):
+            for mid in models:
+                if pref in mid.lower():
+                    return mid
+        return models[0]
+    except Exception:
+        return None
+
+
 def ask_ai_strategist(
     provider: str,
     api_key: str,
@@ -234,30 +264,42 @@ def ask_ai_strategist(
             messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_prompt})
 
-    try:
-        resp = requests.post(
-            cfg["endpoint"],
-            headers={
-                "Authorization": f"Bearer {api_key.strip()}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": cfg["model"],
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 1400,
-            },
-            timeout=(10, 45),
-        )
-        data = resp.json() if resp.content else {}
-        if resp.status_code == 200:
-            choices = data.get("choices") or []
-            if choices:
-                text = (choices[0].get("message", {}).get("content") or "").strip()
-                if text:
-                    return True, text
-            return False, f"{provider} returned an empty response."
-        err = data.get("error", {}).get("message") or data.get("message") or f"HTTP {resp.status_code}"
-        return False, f"{provider} API error: {err}"
-    except Exception as exc:
-        return False, f"Connection error calling {provider}: {exc}"
+    model_to_use = cfg["model"]
+    for attempt in range(2):
+        try:
+            resp = requests.post(
+                cfg["endpoint"],
+                headers={
+                    "Authorization": f"Bearer {api_key.strip()}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_to_use,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 1400,
+                },
+                timeout=(10, 45),
+            )
+            data = resp.json() if resp.content else {}
+            if resp.status_code == 200:
+                choices = data.get("choices") or []
+                if choices:
+                    text = (choices[0].get("message", {}).get("content") or "").strip()
+                    if text:
+                        return True, text
+                return False, f"{provider} returned an empty response."
+            err = data.get("error", {}).get("message") or data.get("message") or f"HTTP {resp.status_code}"
+            if (
+                attempt == 0
+                and "groq" in provider.lower()
+                and any(k in err.lower() for k in ("does not exist", "not found", "decommissioned", "access"))
+            ):
+                alt_model = _pick_available_groq_model(api_key)
+                if alt_model and alt_model != model_to_use:
+                    model_to_use = alt_model
+                    continue
+            return False, f"{provider} API error: {err}"
+        except Exception as exc:
+            return False, f"Connection error calling {provider}: {exc}"
+    return False, f"{provider} API error: Unable to complete request."
