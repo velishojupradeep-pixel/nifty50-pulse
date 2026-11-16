@@ -1228,37 +1228,51 @@ with st.expander(
         "Automatically reads your live positions, NSE option chain, technicals (RSI/ADX/SuperTrend/VWAP), "
         "and Google Finance macro cues. Switch providers anytime if one is busy."
     )
-    provider_names = list(AI_PROVIDERS.keys())
+    GOOGLE_AI_MODE_LABEL = "🌐 Google AI Mode (No API Key)"
+    provider_names = list(AI_PROVIDERS.keys()) + [GOOGLE_AI_MODE_LABEL]
     ai_col1, ai_col2, ai_col3 = st.columns([1.5, 1.8, 1.0])
     with ai_col1:
         selected_ai = st.selectbox("AI Provider", provider_names, key="ai_provider_select")
-    cfg_ai = AI_PROVIDERS[selected_ai]
-    secret_ai_key = get_provider_api_key(selected_ai, "")
-    saved_session_key = st.session_state["saved_ai_keys"].get(selected_ai, "")
 
-    with ai_col2:
-        if not secret_ai_key:
-            ai_key_in = st.text_input(
-                f"{selected_ai.split('(')[0].strip()} API Key",
-                value=saved_session_key,
-                type="password",
-                key=f"ai_key_widget_{cfg_ai['secret_name']}",
-                placeholder=cfg_ai["placeholder"],
-            )
-            if ai_key_in and ai_key_in.strip():
-                st.session_state["saved_ai_keys"][selected_ai] = ai_key_in.strip()
-                st.session_state["gemini_expanded"] = True
-        else:
+    is_google_ai_mode = selected_ai == GOOGLE_AI_MODE_LABEL
+    if is_google_ai_mode:
+        cfg_ai = {}
+        secret_ai_key = ""
+        resolved_ai_key = "NO_KEY_NEEDED"
+        with ai_col2:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            st.success("✅ Configured in Secrets")
+            st.info("No API Key required — generates a pre-filled Google AI Mode link.")
+        with ai_col3:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            st.markdown("[Google AI Mode ↗](https://www.google.com/search?udm=50)")
+    else:
+        cfg_ai = AI_PROVIDERS[selected_ai]
+        secret_ai_key = get_provider_api_key(selected_ai, "")
+        saved_session_key = st.session_state["saved_ai_keys"].get(selected_ai, "")
 
-    with ai_col3:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        resolved_ai_key = secret_ai_key or st.session_state["saved_ai_keys"].get(selected_ai, "")
-        if resolved_ai_key and not secret_ai_key:
-            st.success("✅ Key ready")
-        elif not secret_ai_key:
-            st.markdown(f"[Get API Key ↗]({cfg_ai['signup_url']})")
+        with ai_col2:
+            if not secret_ai_key:
+                ai_key_in = st.text_input(
+                    f"{selected_ai.split('(')[0].strip()} API Key",
+                    value=saved_session_key,
+                    type="password",
+                    key=f"ai_key_widget_{cfg_ai['secret_name']}",
+                    placeholder=cfg_ai["placeholder"],
+                )
+                if ai_key_in and ai_key_in.strip():
+                    st.session_state["saved_ai_keys"][selected_ai] = ai_key_in.strip()
+                    st.session_state["gemini_expanded"] = True
+            else:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                st.success("✅ Configured in Secrets")
+
+        with ai_col3:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            resolved_ai_key = secret_ai_key or st.session_state["saved_ai_keys"].get(selected_ai, "")
+            if resolved_ai_key and not secret_ai_key:
+                st.success("✅ Key ready")
+            elif not secret_ai_key:
+                st.markdown(f"[Get API Key ↗]({cfg_ai['signup_url']})")
 
     qb1, qb2, qb3, qb4 = st.columns([1.2, 1.3, 1.2, 0.7])
     quick_prompt = None
@@ -1294,16 +1308,29 @@ with st.expander(
     active_prompt = quick_prompt or (custom_q.strip() if send_q and custom_q.strip() else None)
     if active_prompt:
         st.session_state["gemini_expanded"] = True
-        if not resolved_ai_key:
+        ctx = build_market_context(
+            spot=ltp,
+            advisor=advisor,
+            eval_res=eval_res,
+            tech_data=tech_data,
+            macro_data=macro_data,
+        )
+        if is_google_ai_mode:
+            full_prompt = (
+                f"Analyze my NIFTY 50 option positions and suggest risk-minimization / profit adjustments.\n\n"
+                f"Question: {active_prompt}\n\n{ctx}"
+            )
+            google_ai_url = f"https://www.google.com/search?udm=50&q={urllib.parse.quote(full_prompt[:1800])}"
+            gl1, gl2 = st.columns(2)
+            with gl1:
+                st.link_button("🔍 Open in Google Search AI Mode ↗", google_ai_url, use_container_width=True)
+            with gl2:
+                st.link_button("✨ Open Gemini Web (No API Key) ↗", "https://gemini.google.com/app", use_container_width=True)
+            st.caption("Copy full context prompt (1-click copy icon on top-right) if you want to paste into Gemini Web:")
+            st.code(full_prompt, language="text")
+        elif not resolved_ai_key:
             st.warning(f"Please enter your API Key for {selected_ai} above (or add `{cfg_ai['secret_name']}` to Secrets).")
         else:
-            ctx = build_market_context(
-                spot=ltp,
-                advisor=advisor,
-                eval_res=eval_res,
-                tech_data=tech_data,
-                macro_data=macro_data,
-            )
             with st.spinner(f"{selected_ai.split('(')[0].strip()} is analyzing your live positions & market data..."):
                 ok_g, ans_g = ask_ai_strategist(
                     provider=selected_ai,
