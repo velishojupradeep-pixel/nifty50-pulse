@@ -1208,43 +1208,62 @@ else:
     )
 
 # --- SUBSECTION: GEMINI AI POSITION STRATEGIST ---
-with st.expander("🤖 Gemini AI Position Strategist (Interactive Live Analysis)", expanded=False):
+if "gemini_chat" not in st.session_state:
+    st.session_state["gemini_chat"] = []
+if "saved_gemini_api_key" not in st.session_state:
+    st.session_state["saved_gemini_api_key"] = ""
+if "gemini_expanded" not in st.session_state:
+    st.session_state["gemini_expanded"] = False
+
+with st.expander(
+    "🤖 Gemini AI Position Strategist (Interactive Live Analysis)",
+    expanded=bool(st.session_state["gemini_expanded"] or st.session_state["gemini_chat"]),
+):
     st.caption(
         "Powered by Gemini 2.5 Flash — automatically reads your live positions, NSE option chain, "
         "technicals (RSI/ADX/SuperTrend/VWAP), and Google Finance macro cues."
     )
-    resolved_gemini_key = get_gemini_api_key(st.session_state.get("gemini_api_key_input", ""))
-    if not resolved_gemini_key:
+    secret_gemini_key = get_gemini_api_key("")
+    if not secret_gemini_key:
         gk_c1, gk_c2 = st.columns([2.2, 1.3])
         with gk_c1:
             g_key_in = st.text_input(
-                "Enter Gemini API Key (Free at Google AI Studio)",
+                "Gemini API Key (Free at Google AI Studio)",
+                value=st.session_state["saved_gemini_api_key"],
                 type="password",
-                key="gemini_api_key_input",
+                key="gemini_api_key_widget",
                 placeholder="AIza...",
             )
-            resolved_gemini_key = get_gemini_api_key(g_key_in)
+            if g_key_in and g_key_in.strip():
+                st.session_state["saved_gemini_api_key"] = g_key_in.strip()
+                st.session_state["gemini_expanded"] = True
         with gk_c2:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            st.markdown("[Get Free Gemini API Key ↗](https://aistudio.google.com/apikey)")
+            if st.session_state["saved_gemini_api_key"]:
+                st.success("✅ API Key ready")
+            else:
+                st.markdown("[Get Free Gemini API Key ↗](https://aistudio.google.com/apikey)")
 
-    if "gemini_chat" not in st.session_state:
-        st.session_state["gemini_chat"] = []
+    resolved_gemini_key = secret_gemini_key or st.session_state["saved_gemini_api_key"]
 
     qb1, qb2, qb3, qb4 = st.columns([1.2, 1.3, 1.2, 0.7])
     quick_prompt = None
     with qb1:
         if st.button("🛡️ Analyze Risk & Hedges", key="gm_risk", use_container_width=True):
+            st.session_state["gemini_expanded"] = True
             quick_prompt = "Analyze my current positions' tail risk, net delta, and suggest exact strike hedges with live prices."
     with qb2:
         if st.button("⚡ What if NIFTY ±200 pts?", key="gm_move", use_container_width=True):
+            st.session_state["gemini_expanded"] = True
             quick_prompt = "Stress-test my current positions if NIFTY moves +200 pts or -200 pts today, and give exact adjustment steps."
     with qb3:
         if st.button("💰 Profit-Book / Roll Plan", key="gm_roll", use_container_width=True):
+            st.session_state["gemini_expanded"] = True
             quick_prompt = "Based on current technicals, VIX, and macro cues, should I hold, book profits, or roll any legs?"
     with qb4:
         if st.button("🧹 Clear", key="gm_clear", use_container_width=True):
             st.session_state["gemini_chat"] = []
+            st.session_state["gemini_expanded"] = True
             st.rerun()
 
     with st.form("gemini_chat_form", clear_on_submit=True):
@@ -1260,6 +1279,7 @@ with st.expander("🤖 Gemini AI Position Strategist (Interactive Live Analysis)
 
     active_prompt = quick_prompt or (custom_q.strip() if send_q and custom_q.strip() else None)
     if active_prompt:
+        st.session_state["gemini_expanded"] = True
         if not resolved_gemini_key:
             st.warning("Please enter your Gemini API Key above (or add `GEMINI_API_KEY` to Secrets) to ask Gemini.")
         else:
