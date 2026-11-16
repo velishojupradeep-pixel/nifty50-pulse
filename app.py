@@ -1220,7 +1220,7 @@ with st.expander(
     expanded=bool(st.session_state["gemini_expanded"] or st.session_state["gemini_chat"]),
 ):
     st.caption(
-        "Powered by Gemini 2.5 Flash — automatically reads your live positions, NSE option chain, "
+        "Powered by Gemini 3.8 Flash — automatically reads your live positions, NSE option chain, "
         "technicals (RSI/ADX/SuperTrend/VWAP), and Google Finance macro cues."
     )
     secret_gemini_key = get_gemini_api_key("")

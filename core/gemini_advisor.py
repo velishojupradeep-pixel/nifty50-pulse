@@ -1,6 +1,6 @@
 """
 Gemini AI Position Strategist for NIFTY 50 Option Sellers.
-Uses Gemini REST API (gemini-2.5-flash) with live NSE option chain, active positions,
+Uses Gemini REST API (gemini-3.8-flash) with live NSE option chain, active positions,
 technical indicators, and Google Finance macro context injected into every prompt.
 """
 
@@ -9,7 +9,7 @@ import json
 from typing import Dict, Any, List, Optional, Tuple
 import requests
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 
