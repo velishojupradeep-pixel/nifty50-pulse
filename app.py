@@ -20,7 +20,12 @@ from core.macro import MacroEventsProvider
 from core.positions import PositionManager, NIFTY_LOT_SIZE
 from core.auth import SupabaseAuthClient
 from core.zerodha import fetch_kite_positions, exchange_request_token, parse_kite_csv
-from core.gemini_advisor import get_gemini_api_key, build_market_context, ask_gemini_strategist
+from core.gemini_advisor import (
+    AI_PROVIDERS,
+    get_provider_api_key,
+    build_market_context,
+    ask_ai_strategist,
+)
 from utils.formatting import (
     format_inr,
     format_volume,
@@ -1207,44 +1212,53 @@ else:
         "(e.g., SELL 25450 CE / SELL 24850 PE) to see live MTM P&L, expiry payoff, and tailored risk/profit adjustments."
     )
 
-# --- SUBSECTION: GEMINI AI POSITION STRATEGIST ---
+# --- SUBSECTION: AI POSITION STRATEGIST (GROQ / XAI GROK / GEMINI) ---
 if "gemini_chat" not in st.session_state:
     st.session_state["gemini_chat"] = []
-if "saved_gemini_api_key" not in st.session_state:
-    st.session_state["saved_gemini_api_key"] = ""
+if "saved_ai_keys" not in st.session_state:
+    st.session_state["saved_ai_keys"] = {}
 if "gemini_expanded" not in st.session_state:
     st.session_state["gemini_expanded"] = False
 
 with st.expander(
-    "🤖 Gemini AI Position Strategist (Interactive Live Analysis)",
+    "🤖 AI Position Strategist — Groq / xAI Grok / Gemini (Live Analysis)",
     expanded=bool(st.session_state["gemini_expanded"] or st.session_state["gemini_chat"]),
 ):
     st.caption(
-        "Powered by Gemini 3.8 Flash — automatically reads your live positions, NSE option chain, "
-        "technicals (RSI/ADX/SuperTrend/VWAP), and Google Finance macro cues."
+        "Automatically reads your live positions, NSE option chain, technicals (RSI/ADX/SuperTrend/VWAP), "
+        "and Google Finance macro cues. Switch providers anytime if one is busy."
     )
-    secret_gemini_key = get_gemini_api_key("")
-    if not secret_gemini_key:
-        gk_c1, gk_c2 = st.columns([2.2, 1.3])
-        with gk_c1:
-            g_key_in = st.text_input(
-                "Gemini API Key (Free at Google AI Studio)",
-                value=st.session_state["saved_gemini_api_key"],
-                type="password",
-                key="gemini_api_key_widget",
-                placeholder="AIza...",
-            )
-            if g_key_in and g_key_in.strip():
-                st.session_state["saved_gemini_api_key"] = g_key_in.strip()
-                st.session_state["gemini_expanded"] = True
-        with gk_c2:
-            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            if st.session_state["saved_gemini_api_key"]:
-                st.success("✅ API Key ready")
-            else:
-                st.markdown("[Get Free Gemini API Key ↗](https://aistudio.google.com/apikey)")
+    provider_names = list(AI_PROVIDERS.keys())
+    ai_col1, ai_col2, ai_col3 = st.columns([1.5, 1.8, 1.0])
+    with ai_col1:
+        selected_ai = st.selectbox("AI Provider", provider_names, key="ai_provider_select")
+    cfg_ai = AI_PROVIDERS[selected_ai]
+    secret_ai_key = get_provider_api_key(selected_ai, "")
+    saved_session_key = st.session_state["saved_ai_keys"].get(selected_ai, "")
 
-    resolved_gemini_key = secret_gemini_key or st.session_state["saved_gemini_api_key"]
+    with ai_col2:
+        if not secret_ai_key:
+            ai_key_in = st.text_input(
+                f"{selected_ai.split('(')[0].strip()} API Key",
+                value=saved_session_key,
+                type="password",
+                key=f"ai_key_widget_{cfg_ai['secret_name']}",
+                placeholder=cfg_ai["placeholder"],
+            )
+            if ai_key_in and ai_key_in.strip():
+                st.session_state["saved_ai_keys"][selected_ai] = ai_key_in.strip()
+                st.session_state["gemini_expanded"] = True
+        else:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            st.success("✅ Configured in Secrets")
+
+    with ai_col3:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        resolved_ai_key = secret_ai_key or st.session_state["saved_ai_keys"].get(selected_ai, "")
+        if resolved_ai_key and not secret_ai_key:
+            st.success("✅ Key ready")
+        elif not secret_ai_key:
+            st.markdown(f"[Get API Key ↗]({cfg_ai['signup_url']})")
 
     qb1, qb2, qb3, qb4 = st.columns([1.2, 1.3, 1.2, 0.7])
     quick_prompt = None
@@ -1270,18 +1284,18 @@ with st.expander(
         gc1, gc2 = st.columns([5, 1])
         with gc1:
             custom_q = st.text_input(
-                "Ask Gemini about your positions or market setup",
+                "Ask AI about your positions or market setup",
                 placeholder="e.g., Should I add a 24800 PE hedge or convert to an Iron Condor?",
                 label_visibility="collapsed",
             )
         with gc2:
-            send_q = st.form_submit_button("Ask Gemini ✨", use_container_width=True)
+            send_q = st.form_submit_button("Ask AI ✨", use_container_width=True)
 
     active_prompt = quick_prompt or (custom_q.strip() if send_q and custom_q.strip() else None)
     if active_prompt:
         st.session_state["gemini_expanded"] = True
-        if not resolved_gemini_key:
-            st.warning("Please enter your Gemini API Key above (or add `GEMINI_API_KEY` to Secrets) to ask Gemini.")
+        if not resolved_ai_key:
+            st.warning(f"Please enter your API Key for {selected_ai} above (or add `{cfg_ai['secret_name']}` to Secrets).")
         else:
             ctx = build_market_context(
                 spot=ltp,
@@ -1290,9 +1304,10 @@ with st.expander(
                 tech_data=tech_data,
                 macro_data=macro_data,
             )
-            with st.spinner("Gemini is analyzing your live positions & market data..."):
-                ok_g, ans_g = ask_gemini_strategist(
-                    api_key=resolved_gemini_key,
+            with st.spinner(f"{selected_ai.split('(')[0].strip()} is analyzing your live positions & market data..."):
+                ok_g, ans_g = ask_ai_strategist(
+                    provider=selected_ai,
+                    api_key=resolved_ai_key,
                     user_prompt=active_prompt,
                     context_text=ctx,
                     chat_history=st.session_state["gemini_chat"],

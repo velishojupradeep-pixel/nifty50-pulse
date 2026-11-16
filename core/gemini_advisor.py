@@ -12,6 +12,52 @@ import requests
 GEMINI_MODEL = "gemini-3.8-flash"
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
+AI_PROVIDERS = {
+    "Groq (Free & Fast - Llama 3.3 70B)": {
+        "secret_name": "GROQ_API_KEY",
+        "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+        "model": "llama-3.3-70b-versatile",
+        "signup_url": "https://console.groq.com/keys",
+        "placeholder": "gsk_...",
+        "type": "openai",
+    },
+    "xAI Grok (grok-3-mini)": {
+        "secret_name": "XAI_API_KEY",
+        "endpoint": "https://api.x.ai/v1/chat/completions",
+        "model": "grok-3-mini",
+        "signup_url": "https://console.x.ai",
+        "placeholder": "xai-...",
+        "type": "openai",
+    },
+    "Google Gemini (gemini-3.8-flash)": {
+        "secret_name": "GEMINI_API_KEY",
+        "endpoint": GEMINI_ENDPOINT,
+        "model": GEMINI_MODEL,
+        "signup_url": "https://aistudio.google.com/apikey",
+        "placeholder": "AIza...",
+        "type": "gemini",
+    },
+}
+
+
+def get_provider_api_key(provider: str, session_key: Optional[str] = None) -> str:
+    """Resolves API key for the selected AI provider from session input, st.secrets, or env."""
+    if session_key and session_key.strip():
+        return session_key.strip()
+    cfg = AI_PROVIDERS.get(provider, {})
+    secret_name = cfg.get("secret_name", "GEMINI_API_KEY")
+    env_key = os.environ.get(secret_name, "").strip()
+    if env_key:
+        return env_key
+    try:
+        import streamlit as st
+
+        if secret_name in st.secrets:
+            return str(st.secrets[secret_name]).strip()
+    except Exception:
+        pass
+    return ""
+
 
 def get_gemini_api_key(session_key: Optional[str] = None) -> str:
     """Resolves Gemini API key from session input, st.secrets, or environment."""
@@ -152,3 +198,66 @@ def ask_gemini_strategist(
         return False, f"Gemini API error: {err}"
     except Exception as exc:
         return False, f"Connection error calling Gemini: {exc}"
+
+
+def ask_ai_strategist(
+    provider: str,
+    api_key: str,
+    user_prompt: str,
+    context_text: str,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+) -> Tuple[bool, str]:
+    """Unified dispatcher for Groq, xAI Grok, and Google Gemini."""
+    cfg = AI_PROVIDERS.get(provider, AI_PROVIDERS["Google Gemini (gemini-3.8-flash)"])
+    if cfg["type"] == "gemini":
+        return ask_gemini_strategist(api_key, user_prompt, context_text, chat_history)
+
+    if not api_key:
+        return False, f"Missing API Key for {provider}."
+
+    system_instruction = (
+        "You are an institutional NIFTY 50 Options Trading & Risk Management Strategist. "
+        "Analyze the user's exact open/closed NIFTY option legs (65 qty/lot), live NSE metrics, "
+        "technicals, and global macro cues provided in the context. "
+        "Be specific with strike prices, stop-loss levels, hedge wings, and roll adjustments. "
+        "Keep responses structured, concise, and actionable. "
+        "Include a brief 1-line educational/risk disclaimer at the end (not financial advice)."
+    )
+
+    messages = [
+        {"role": "system", "content": system_instruction},
+        {"role": "user", "content": f"Here is my live market & portfolio snapshot:\n\n{context_text}"},
+        {"role": "assistant", "content": "Understood. I have your live NIFTY 50 market snapshot and positions. What would you like to analyze?"},
+    ]
+    if chat_history:
+        for msg in chat_history[-6:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_prompt})
+
+    try:
+        resp = requests.post(
+            cfg["endpoint"],
+            headers={
+                "Authorization": f"Bearer {api_key.strip()}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": cfg["model"],
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": 1400,
+            },
+            timeout=(10, 45),
+        )
+        data = resp.json() if resp.content else {}
+        if resp.status_code == 200:
+            choices = data.get("choices") or []
+            if choices:
+                text = (choices[0].get("message", {}).get("content") or "").strip()
+                if text:
+                    return True, text
+            return False, f"{provider} returned an empty response."
+        err = data.get("error", {}).get("message") or data.get("message") or f"HTTP {resp.status_code}"
+        return False, f"{provider} API error: {err}"
+    except Exception as exc:
+        return False, f"Connection error calling {provider}: {exc}"
